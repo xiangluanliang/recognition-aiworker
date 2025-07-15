@@ -88,7 +88,7 @@ class ReportGeneratorService:
         self.tokenizer = AutoTokenizer.from_pretrained(
                 self.MODEL_NAME,
                 trust_remote_code=True
-        )
+            )
 
         AutoModelForCausalLM.from_pretrained(
             self.MODEL_NAME,
