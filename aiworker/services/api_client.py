@@ -26,3 +26,17 @@ def log_event(event_data: dict):
         requests.post(url, json=event_data, timeout=5, headers=headers)
     except Exception as e:
         logger.error(f"Failed to log event to Django: {e}")
+
+def fetch_warning_zones(camera_id: int) -> dict:
+    """从Django后端获取指定摄像头的警戒区配置。"""
+    default_zones = {'zones': [], 'safe_time': 5, 'safe_distance': 50.0}
+    try:
+        # 注意：URL应该从config.py中获取
+        url = f"{DJANGO_API_BASE_URL}warning-zones/by-camera/{camera_id}/"
+        headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"获取摄像头 {camera_id} 的警戒区失败: {e}")
+        return default_zones

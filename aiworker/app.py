@@ -11,9 +11,10 @@ from flask_cors import CORS
 # --- 导入重构后的模块 ---
 from aiworker.config import *
 from aiworker.services.api_client import fetch_known_faces, log_event
-from aiworker.services.stream_processor import capture_and_process_thread
 from aiworker.face.vision_service import VisionServiceWorker
-from aiworker.face.face_handler import process_frame_for_api
+from aiworker.face.face_handler import process_frame_for_api, process_frame_for_stream as process_face_stream
+from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
+from aiworker.yolo.yolo_detector import YoloDetector
 
 # from aiworker.report.report_generator import process_report_generation
 
@@ -23,11 +24,14 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - (AI-Worker) - %(message)s')
 
 # --- 全局实例和缓存 ---
+# 全局AI模型实例 (重量级对象，只加载一次)
 vision_worker = VisionServiceWorker()
+yolo_detector = YoloDetector()
+
+# 全局缓存
 video_streams_cache = {}
 known_faces_cache = []
-AI_FUNCTIONS = ['face_recognition', 'person_detection']  # 支持的AI功能列表
-
+AI_FUNCTIONS = ['face_recognition', 'abnormal_detection']
 
 # --- 后台任务：定时刷新已知人脸缓存 ---
 def schedule_face_cache_refresh():
@@ -36,7 +40,60 @@ def schedule_face_cache_refresh():
     threading.Timer(CACHE_REFRESH_INTERVAL, schedule_face_cache_refresh).start()
 
 
-# --- 实时视频流端点 ---
+def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
+    cache_key = (stream_id, ai_function_name, camera_id)
+    stream_lock = video_streams_cache[cache_key]['lock']
+    camera_id_int = int(camera_id)
+
+    rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
+    cap = cv2.VideoCapture(rtmp_url)
+    if not cap.isOpened():
+        app.logger.error(f"Cannot open stream: {rtmp_url}")
+        return
+
+    app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
+
+    # --- 为需要状态的AI功能初始化对应的处理器实例 ---
+    processor_instance = None
+    if ai_function_name == 'abnormal_detection':
+        fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
+        processor_instance = AbnormalBehaviorProcessor(camera_id_int, yolo_detector, fps)
+
+    frame_count = 0
+    while cache_key in video_streams_cache:
+        success, frame = cap.read()
+        if not success:
+            time.sleep(0.1)
+            continue
+
+        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+
+        # --- 跳帧逻辑 ---
+        if frame_count % FRAME_SKIP_RATE != 0:
+            frame_count += 1
+            continue  # 跳过此帧的AI处理
+
+        processed_frame = frame
+        if ai_function_name == 'face_recognition':
+            # 人脸识别的跳帧逻辑在其内部处理，以保证UI流畅
+            processed_frame, _ = process_face_stream(
+                vision_worker, frame, known_faces_cache, camera_id_int, perform_heavy_ai=True
+            )
+        elif ai_function_name == 'abnormal_detection' and processor_instance:
+            processed_frame, _ = processor_instance.process_frame(frame)
+
+        # 将处理后的帧放入缓存
+        ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        if ret:
+            with stream_lock:
+                video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
+
+        frame_count += 1
+
+    cap.release()
+    video_streams_cache.pop(cache_key, None)
+    app.logger.info(f"Thread stopped for {cache_key}")
+
 @app.route('/<ai_function_name>/<stream_id>/<camera_id>')
 def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
     if ai_function_name not in AI_FUNCTIONS:
