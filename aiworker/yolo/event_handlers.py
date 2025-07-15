@@ -1,9 +1,12 @@
 # 这里放所有处理异常事件的函数，给他都整理到一起
+import threading
 from collections import defaultdict, deque
 
 import numpy as np
 import requests
 from ultralytics import YOLO
+
+from aiworker.app import app
 
 # ——————————  检测人 ————————————
 
@@ -298,6 +301,23 @@ def detect_fight(ids, centers, kpts_list, frame_idx, fight_kpts_history):
                         if orientation_similarity(vec1, vec2) < 0.3:  # 接近面对面
                             conflicts.append((pid1, pid2))
     return conflicts
+
+
+def log_event_to_django(event_data: dict):
+    def _send_request():
+        try:
+            url = f"https://8.152.101.217/api/test/api/event_logs/"
+            requests.post(
+                url,
+                json=event_data,
+                timeout=5,
+                headers={"Authorization": f"Token 3d814802906b91d7947518f5d0191a42795cace7"},
+                verify=False
+            )
+        except Exception as e:
+            app.logger.error(f"Failed to log event to Django: {e}")
+
+    threading.Thread(target=_send_request).start()
 
 
 if __name__ == '__main__':
