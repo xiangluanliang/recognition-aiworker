@@ -1,34 +1,13 @@
-import cv2
 import os
+import cv2
 import numpy as np
 import logging
 from scipy.spatial.distance import euclidean
 import onnxruntime
 import dlib
 from imutils import face_utils
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-
-# --- 活体检测模型参数 ---
-OULU_LIVENESS_INPUT_SIZE = (224, 224)
-OULU_LIVENESS_THRESHOLD = 0.015 # 调整：更宽松的阈值
-
-# --- 人脸识别模型路径 ---
-FACE_RECOGNITION_MODEL_FILENAME = 'InceptionResnetV1_vggface2.onnx'
-
-# --- Dlib 关键点预测器模型路径 ---
-DLIB_LANDMARK_PREDICTOR_FILENAME = 'shape_predictor_68_face_landmarks.dat'
-
-# --- 眨眼检测参数 ---
-EYE_AR_THRESH = 0.25 # 调整：更低的EAR阈值更容易检测眨眼
-EYE_AR_CONSEC_FRAMES = 2 # 调整：连续帧数减少，更快检测眨眼
-BLINK_TIMEOUT_FRAMES = 150 # 调整：给予更多帧数（时间）来完成眨眼
-
-# --- 新增：人脸区域要求参数 (用于绘制指导框和活体推理) ---
-RECOMMENDED_FACE_RECT_RATIO = 0.5 # 推荐人脸区域占画面宽度/高度的比例
-RECOMMENDED_FACE_MIN_PIXELS = 150 # 推荐人脸的最小尺寸（以较短边为准），用于绘制指导框
-# MIN_EFFECTIVE_LIVENESS_ROI_SIZE = OULU_LIVENESS_INPUT_SIZE[0] // 2 # 此参数已存在
+from aiworker.config import FACE_RECOGNITION_MODEL_FILENAME, DLIB_LANDMARK_PREDICTOR_FILENAME, OULU_LIVENESS_THRESHOLD, \
+    OULU_LIVENESS_INPUT_SIZE, MIN_EFFECTIVE_LIVENESS_ROI_SIZE, EYE_AR_CONSEC_FRAMES, BLINK_TIMEOUT_FRAMES, EYE_AR_THRESH
 
 
 class VisionServiceWorker:
