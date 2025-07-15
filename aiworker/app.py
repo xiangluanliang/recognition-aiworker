@@ -14,7 +14,7 @@ from flask_cors import CORS
 
 from aiworker.yolo.yolo_detector import process_single_frame as person_detector
 from aiworker.face.face_recognizer2 import process_frame_face_recognition
-from aiworker.utils.report_generator import process_report_generation
+# from aiworker.utils.report_generator import process_report_generation
 
 app = Flask(__name__)
 CORS(app)
@@ -253,16 +253,16 @@ def generate_report_endpoint():
     app.logger.info("Received request to generate daily report.")
     try:
         # 1. 从Django获取数据
-        summary_data = fetch_summary_for_report()
+        # summary_data = fetch_summary_for_report()
 
         # 2. 【核心修改】调用外部模块的函数进行AI处理
-        report_content = process_report_generation(summary_data)
+        # report_content = process_report_generation(summary_data)
 
 
         return jsonify({
             "status": "success",
             "message": "Daily report generated and submitted successfully.",
-            "content": report_content
+            "content": "功能正在维护中" #report_content
         }), 200
 
     except Exception as e:

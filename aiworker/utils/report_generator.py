@@ -145,3 +145,52 @@ def process_report_generation(summary_data: dict) -> str:
             f"摄像头状态：{online_cameras}/{total_cameras} 台在线。"
         )
     return report_content
+
+
+if __name__ == '__main__':
+    # 示例1: 有事件发生的情况
+    print("\n" + "=" * 20 + " 测试案例 1: 有事件发生 " + "=" * 20)
+    summary_data_with_events = {
+        '日期': '2025-07-13',
+        '总事件数': 14,
+        '未处理事件数': 3,
+        '处理中事件数': 4,
+        '已处理事件数': 7,
+        '摄像头总数': 20,
+        '在线摄像头': 18,
+        '各类型事件统计': {
+            '人脸识别匹配': 5,
+            '火警': 2,
+            '区域入侵': 6,
+            '人员冲突': 1,
+        }
+    }
+
+    try:
+        final_report_1 = process_report_generation(summary_data_with_events)
+        print("\n--- ✅ 生成的最终报告 1 ---\n")
+        print(final_report_1)
+    except ConnectionError as e:
+        print(f"\n--- ❌ 报告生成失败 ---")
+        print(e)
+
+    # 示例2: 你提供的无事件的真实输入
+    print("\n\n" + "=" * 20 + " 测试案例 2: 无事件发生 " + "=" * 20)
+    summary_data_no_events = {
+        "日期": "2025-07-14",
+        "总事件数": 0,
+        "未处理事件数": 0,
+        "处理中事件数": 0,
+        "已处理事件数": 0,
+        "摄像头总数": 4,
+        "在线摄像头": 3,
+        "各类型事件统计": {}
+    }
+
+    try:
+        final_report_2 = process_report_generation(summary_data_no_events)
+        print("\n--- ✅ 生成的最终报告 2 ---\n")
+        print(final_report_2)
+    except ConnectionError as e:
+        print(f"\n--- ❌ 报告生成失败 ---")
+        print(e)
