@@ -186,8 +186,12 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
             app.logger.error(f"Failed to fetch warning zones: {e}")
             return {camera_id: []}
 
-    warning_zone_map = fetch_warning_zones(camera_id)
 
+    zone_data = fetch_warning_zones(camera_id)
+
+    warning_zone_map = {camera_id: zone_data['zones']}  # ✅ 注意格式符合原函数要求
+    stay_seconds = zone_data['safe_time']
+    safe_distance = zone_data['safe_distance']
     # ✅ 伪造 camera 对象（简化处理）
     camera = {
         'id': camera_id,
@@ -227,8 +231,8 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
                     frame_idx=frame_count,
                     fps=fps,
                     camera_id=camera_id,
-                    stay_seconds=5,  # 可动态传入
-                    safe_distance=50.0,  # 可动态传入
+                    stay_seconds=stay_seconds,
+                    safe_distance=safe_distance,
                     prev_centers=prev_centers,
                     fall_clip_buffer=fall_clip_buffer,
                     person_history=person_history,

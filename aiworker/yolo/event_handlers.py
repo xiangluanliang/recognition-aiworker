@@ -9,13 +9,11 @@ from ultralytics import YOLO
 
 pose_model = YOLO("yolov8l-pose.pt")
 
-
 # 识别人物中心点
 def get_center_point(kpts):
     x = np.mean(kpts[:, 0])
     y = np.mean(kpts[:, 1])
     return (int(x), int(y))
-
 
 # 用来检测人的
 def detect_people(frame):
@@ -37,7 +35,6 @@ def detect_people(frame):
             confidences.append(conf)
 
     return kpts_list, centers, confidences
-
 
 # 追踪人物，匹配id
 def match_person_id(current_centers, prev_centers, threshold=60):
@@ -62,7 +59,6 @@ def match_person_id(current_centers, prev_centers, threshold=60):
             matched.add(new_id)
     return ids
 
-
 # ——————————  摔倒检测  ——————————
 
 # 角度距离判断
@@ -71,7 +67,6 @@ def angle_between_points(a, b, c):
     bc = np.array(c) - np.array(b)
     cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
-
 
 # 摔倒情况检测
 def check_fall(pid, kpts, center, frame_idx, person_history, person_fall_status, fall_window_size=3,
@@ -128,24 +123,48 @@ def check_fall(pid, kpts, center, frame_idx, person_history, person_fall_status,
         status['is_falling'] = False
         return False, False
 
-
 # ——————————  区域入侵  ——————————
 
 def point_in_polygon(point, polygon):
     from matplotlib.path import Path
     return Path(polygon).contains_point(point)
 
-
 # 从数据库中根据摄像头信息获取异常区域(这里由一个request传入相机id获取异常区域，但是不知道对不对)
-def fetch_warning_zones(camera_id):
-    url = f"https://8.152.101.217/api/test/api/warning-zones/by-camera/{camera_id}/"
-    response = requests.get(url, verify=False)
-    if response.status_code == 200:
-        result = response.json()
-        return result['zones']
-    else:
-        return []
+import requests
 
+DJANGO_API_TOKEN = "3d814802906b91d7947518f5d0191a42795cace7"
+# 从获取数据获取数据
+def fetch_warning_zones(camera_id):
+    url = f"https://8.152.101.217/api/test/api/warning_zones/by-camera/{camera_id}/"
+    headers = {
+        "Authorization": f"Token {DJANGO_API_TOKEN}"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        response.raise_for_status()
+
+        result = response.json()
+
+        # result 是一个列表，每个元素是一个 zone dict
+        zones = [zone['zone_points'] for zone in result]
+        # safe_time 和 safe_distance 可以取第一个 zone 的配置（假设一样）
+        safe_time = result[0]['safe_time'] if result else 5
+        safe_distance = result[0]['safe_distance'] if result else 50.0
+
+        return {
+            'zones': zones,
+            'safe_time': safe_time,
+            'safe_distance': safe_distance
+        }
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ 获取异常区域失败: {e}")
+        return {
+            'zones': [],
+            'safe_time': 5,
+            'safe_distance': 50.0
+        }
 
 # 最小距离判断（中心点距离异常区域，目前不用）
 def min_distance_to_polygon(point, polygon):
@@ -165,7 +184,6 @@ def min_distance_to_polygon(point, polygon):
             dist = np.linalg.norm(projection - np.array([px, py]))
         min_dist = min(min_dist, dist)
     return min_dist
-
 
 # 最小距离判断: 人物框边上去点的最小距离检测
 def min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=5):
@@ -214,27 +232,6 @@ def check_intrusion(bbox, center, camera_id, frame_idx, fps, stay_frames_require
             status_cache.pop(pid, None)
 
     return abnormal_events, abnormal_msgs, in_danger_now
-
-
-# 异常距离检测(目前不用了)
-def check_abnormal_overlap(bbox, zone_coords):
-    """
-    判断人物框（bbox）是否与异常区域（zone_coords）重叠。
-    bbox: (x1, y1, x2, y2)
-    zone_coords: (zx1, zy1, zx2, zy2)
-    """
-    x1, y1, x2, y2 = bbox
-    zx1, zy1, zx2, zy2 = zone_coords
-
-    # 判断是否有交集
-    inter_x1 = max(x1, zx1)
-    inter_y1 = max(y1, zy1)
-    inter_x2 = min(x2, zx2)
-    inter_y2 = min(y2, zy2)
-
-    # 有重叠区域
-    return inter_x1 < inter_x2 and inter_y1 < inter_y2
-
 
 # ——————————  打架检测  ——————————
 
