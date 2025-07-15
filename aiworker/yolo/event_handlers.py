@@ -9,11 +9,14 @@ from ultralytics import YOLO
 
 pose_model = YOLO("yolov8l-pose.pt")
 
+
 # 识别人物中心点
 def get_center_point(kpts):
     x = np.mean(kpts[:, 0])
     y = np.mean(kpts[:, 1])
     return (int(x), int(y))
+
+
 # 用来检测人的
 def detect_people(frame):
     results = pose_model(frame)
@@ -24,7 +27,7 @@ def detect_people(frame):
             continue
 
         keypoints_xy = r.keypoints.xy.cpu().numpy()  # [num_people, 17, 2]
-        confs = r.boxes.conf.cpu().numpy()           # [num_people]
+        confs = r.boxes.conf.cpu().numpy()  # [num_people]
 
         for i in range(len(keypoints_xy)):
             pts = keypoints_xy[i]
@@ -34,6 +37,8 @@ def detect_people(frame):
             confidences.append(conf)
 
     return kpts_list, centers, confidences
+
+
 # 追踪人物，匹配id
 def match_person_id(current_centers, prev_centers, threshold=60):
     ids = []
@@ -57,6 +62,7 @@ def match_person_id(current_centers, prev_centers, threshold=60):
             matched.add(new_id)
     return ids
 
+
 # ——————————  摔倒检测  ——————————
 
 # 角度距离判断
@@ -66,8 +72,10 @@ def angle_between_points(a, b, c):
     cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
 
-#摔倒情况检测
-def check_fall(pid, kpts, center, frame_idx, person_history, person_fall_status, fall_window_size=3, cooldown_threshold=150):
+
+# 摔倒情况检测
+def check_fall(pid, kpts, center, frame_idx, person_history, person_fall_status, fall_window_size=3,
+               cooldown_threshold=150):
     mid_shoulder = (kpts[5] + kpts[6]) / 2
     mid_hip = (kpts[11] + kpts[12]) / 2
     mid_knee = (kpts[13] + kpts[14]) / 2
@@ -120,21 +128,24 @@ def check_fall(pid, kpts, center, frame_idx, person_history, person_fall_status,
         status['is_falling'] = False
         return False, False
 
+
 # ——————————  区域入侵  ——————————
 
 def point_in_polygon(point, polygon):
     from matplotlib.path import Path
     return Path(polygon).contains_point(point)
 
+
 # 从数据库中根据摄像头信息获取异常区域(这里由一个request传入相机id获取异常区域，但是不知道对不对)
 def fetch_warning_zones(camera_id):
-    url = f"https://your-django-domain.com/api/warning-zones/{camera_id}/"
-    response = requests.get(url)
+    url = f"https://8.152.101.217/api/test/api/warning-zones/by-camera/{camera_id}/"
+    response = requests.get(url, verify=False)
     if response.status_code == 200:
         result = response.json()
         return result['zones']
     else:
         return []
+
 
 # 最小距离判断（中心点距离异常区域，目前不用）
 def min_distance_to_polygon(point, polygon):
@@ -154,6 +165,8 @@ def min_distance_to_polygon(point, polygon):
             dist = np.linalg.norm(projection - np.array([px, py]))
         min_dist = min(min_dist, dist)
     return min_dist
+
+
 # 最小距离判断: 人物框边上去点的最小距离检测
 def min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=5):
     x1, y1, x2, y2 = bbox
@@ -173,8 +186,11 @@ def min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=5):
 
     # 取这些点中，距离 polygon 最近的那个距离
     return min(min_distance_to_polygon(pt, polygon) for pt in sample_points)
+
+
 # 判断是否触发异常
-def check_intrusion(bbox,center,camera_id,frame_idx,fps,stay_frames_required,safe_distance,warning_zones,status_cache):
+def check_intrusion(bbox, center, camera_id, frame_idx, fps, stay_frames_required, safe_distance, warning_zones,
+                    status_cache):
     abnormal_events = []
     abnormal_msgs = []
     in_danger_now = False  # 只要在危险区域就设为 True
@@ -197,8 +213,10 @@ def check_intrusion(bbox,center,camera_id,frame_idx,fps,stay_frames_required,saf
         else:
             status_cache.pop(pid, None)
 
-    return abnormal_events, abnormal_msgs,in_danger_now
-#异常距离检测(目前不用了)
+    return abnormal_events, abnormal_msgs, in_danger_now
+
+
+# 异常距离检测(目前不用了)
 def check_abnormal_overlap(bbox, zone_coords):
     """
     判断人物框（bbox）是否与异常区域（zone_coords）重叠。
@@ -217,15 +235,18 @@ def check_abnormal_overlap(bbox, zone_coords):
     # 有重叠区域
     return inter_x1 < inter_x2 and inter_y1 < inter_y2
 
+
 # ——————————  打架检测  ——————————
 
 upper_kpts_indices = [5, 6, 7, 8, 9, 10]
+
 
 def upper_body_motion_std(kpts_deque):
     kpts_array = np.array(kpts_deque)  # shape: (n_frames, 17, 2)
     upper_body = kpts_array[:, upper_kpts_indices, :]
     std = np.std(upper_body, axis=0).mean()
     return std
+
 
 def estimate_orientation(kpts):
     kpts = np.array(kpts)
@@ -247,12 +268,16 @@ def estimate_orientation(kpts):
     direction = nose - shoulder_mid
     return direction / (np.linalg.norm(direction) + 1e-5)
 
+
 def orientation_similarity(vec1, vec2):
     cos_theta = np.dot(vec1, vec2)
     return abs(cos_theta)  # 越接近1则角度越小，越不像对打
 
+
 fight_history = defaultdict(lambda: deque(maxlen=5))
-#检测打架情况
+
+
+# 检测打架情况
 def detect_fight(ids, centers, kpts_list, frame_idx, fight_kpts_history):
     conflicts = []
     for i in range(len(centers)):
@@ -274,3 +299,7 @@ def detect_fight(ids, centers, kpts_list, frame_idx, fight_kpts_history):
                             conflicts.append((pid1, pid2))
     return conflicts
 
+
+if __name__ == '__main__':
+    zone = fetch_warning_zones(4)
+    print(zone)

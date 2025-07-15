@@ -20,7 +20,9 @@ def draw_pose(frame, kpts, color=(0, 255, 0)):
         if i < len(kpts) and j < len(kpts):
             pt1, pt2 = tuple(kpts[i]), tuple(kpts[j])
             cv2.line(frame, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), color, 2)
-#保存视频切片内容
+
+
+# 保存视频切片内容
 def save_clip(pid, frame_idx, clip_buffer, fps, subfolder, event_type):
     base_dir = os.path.join(MEDIA_ROOT, 'subject_images', subfolder)
     os.makedirs(base_dir, exist_ok=True)
@@ -36,9 +38,11 @@ def save_clip(pid, frame_idx, clip_buffer, fps, subfolder, event_type):
     writer.release()
 
     # 返回相对路径用于数据库
-    rel_path =  os.path.relpath(clip_path, str(MEDIA_ROOT))
+    rel_path = os.path.relpath(clip_path, str(MEDIA_ROOT))
     return rel_path
-#保存图片
+
+
+# 保存图片
 def save_event_image(frame, pid, frame_idx, subfolder, event_type):
     base_dir = os.path.join(MEDIA_ROOT, 'subject_images', subfolder)
     os.makedirs(base_dir, exist_ok=True)
@@ -50,21 +54,23 @@ def save_event_image(frame, pid, frame_idx, subfolder, event_type):
     rel_path = os.path.relpath(full_path, str(MEDIA_ROOT))
     return rel_path
 
+
 # 在图像上绘制多个异常区域的多边形边框。
 def draw_abnormal_zone(frame, zone_points_list):
     for points in zone_points_list:
         pts = np.array(points, np.int32).reshape((-1, 1, 2))
         cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
 
+
 # 主函数，传入帧，调用检测各种情况
 def process_abnormal_single_frame(
-    frame, frame_idx, fps, camera_id,
-    stay_seconds, safe_distance,
-    prev_centers, fall_clip_buffer, person_history,
-    person_fall_status, zone_status_cache,
-    recorded_intrusions, recorded_conflicts,
-    fight_kpts_history, warning_zone_map, camera,
-    log_event_to_django  # 记得传这个函数进来
+        frame, frame_idx, fps, camera_id,
+        stay_seconds, safe_distance,
+        prev_centers, fall_clip_buffer, person_history,
+        person_fall_status, zone_status_cache,
+        recorded_intrusions, recorded_conflicts,
+        fight_kpts_history, warning_zone_map, camera,
+        log_event_to_django  # 记得传这个函数进来
 ):
     abnormal_count = 0
     intrusion_msgs = []
