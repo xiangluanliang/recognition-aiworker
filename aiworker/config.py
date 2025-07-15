@@ -4,9 +4,10 @@ import os
 # --- General Service Configuration ---
 # 从环境变量获取，如果未设置则使用默认值
 DJANGO_API_TOKEN = os.environ.get('DJANGO_API_TOKEN', '3d814802906b91d7947518f5d0191a42795cace7')
-DJANGO_API_BASE_URL = os.environ.get('DJANGO_API_URL', 'http://127.0.0.1:8000/api/test/')
+DJANGO_API_BASE_URL = os.environ.get('DJANGO_API_URL', 'https://8.152.101.217/api/test/api/')
 RTMP_SERVER_URL = os.environ.get('RTMP_SERVER_URL', 'rtmp://localhost:9090/live')
 CACHE_REFRESH_INTERVAL = 300  # 5 minutes
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/media') # 媒体文件保存根目录
 
 # --- Stream Processing Parameters ---
 FRAME_WIDTH = 854
@@ -53,3 +54,35 @@ BLINK_TIMEOUT_FRAMES = 150  # 眨眼检测超时帧数
 # --- UI and Guidance Parameters ---
 RECOMMENDED_FACE_RECT_RATIO = 0.5  # 推荐人脸区域占画面的比例
 RECOMMENDED_FACE_MIN_PIXELS = 150  # 推荐人脸的最小像素尺寸
+
+# --- Abnormal Behavior Detection Parameters ---
+# Models
+YOLO_POSE_MODEL_FILENAME = "yolov8l-pose.pt"
+
+# Tracking
+PERSON_MATCHING_THRESHOLD = 60 # 追踪时匹配ID的像素距离阈值
+
+#这个是切片的时长，但是我们的视频短短的
+CLIP_DURATION_SECONDS = 2
+
+# Fall Detection
+FALL_ANGLE_THRESHOLD = 85.0 # 身体倾斜角度阈值
+FALL_WINDOW_SIZE = 3 # 连续N帧满足条件才判断为摔倒
+FALL_COOLDOWN_FRAMES = 150 # 摔倒事件上报后的冷却时间
+
+# Intrusion Detection (默认值，实际会从API获取)
+DEFAULT_STAY_SECONDS = 5
+DEFAULT_SAFE_DISTANCE = 50.0
+
+# Fight Detection
+FIGHT_DISTANCE_THRESHOLD = 120 # 打架判断的距离阈值
+FIGHT_MOTION_THRESHOLD = 6.0 # 身体动作幅度阈值
+FIGHT_ORIENTATION_SIMILARITY_THRESHOLD = 0.3 # 面部朝向相似度阈值
+
+# Drawing
+POSE_PAIRS = [
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12), (11, 13), (13, 15),
+    (12, 14), (14, 16)
+]
+
