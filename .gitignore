@@ -27,7 +27,6 @@ poetry.lock
 # ========================================
 runs/
 yolo_cache/
-*.pt
 *.onnx
 *.engine
 *.tflite
@@ -75,4 +74,4 @@ tensorboard/
 wandb/
 *.ckpt
 *.pth
-*.pb
+
