@@ -27,7 +27,6 @@ poetry.lock
 # ========================================
 runs/
 yolo_cache/
-*.onnx
 *.engine
 *.tflite
 *.mlmodel
