@@ -7,8 +7,8 @@ import shutil
 import os
 
 # 模型应该在脚本加载时初始化一次，避免重复加载
-model = YOLO("dnn_models/yolov8n.pt")
-
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+model_path = os.path.join(BASE_DIR, "dnn_models", "yolov8n.pt")
 
 def process_single_frame(frame):
     """

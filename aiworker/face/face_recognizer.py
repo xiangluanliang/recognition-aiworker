@@ -23,7 +23,8 @@ class VisionServiceWorker:
         if not hasattr(self, '_initialized'):
             self._initialized = True
             current_script_dir = os.path.abspath(os.path.dirname(__file__))
-            self.MODEL_DIR = os.path.join(current_script_dir, '..', 'dnn_models')
+            self.BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.MODEL_DIR = os.path.join(self.BASE_DIR, "dnn_models")
             self.FACE_DETECTOR_PROTOTXT_PATH = os.path.join(self.MODEL_DIR, 'opencv_face_detector.pbtxt')
             self.FACE_DETECTOR_WEIGHTS_PATH = os.path.join(self.MODEL_DIR, 'opencv_face_detector_uint8.pb')
             self.FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.4
