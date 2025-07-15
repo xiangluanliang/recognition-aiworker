@@ -216,11 +216,7 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
                 processed_frame, detection_data = process_function(
                     frame.copy(),
                     known_faces_data=KNOWN_FACES_CACHE,
-<<<<<<< HEAD
                     camera_id=camera_id_int
-=======
-                    camera_id=camera_id
->>>>>>> 405223787f3316437e2b7c953342cec716061935
                 )
 
             elif ai_function_name == 'abnormal_detection':
@@ -250,7 +246,6 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
                 # 其他功能（人流量统计等）
                 processed_frame, detection_data = process_function(
                     frame.copy(),
-<<<<<<< HEAD
                     camera_id=camera_id_int
                 )
 
@@ -259,16 +254,6 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
                     event['camera'] = camera_id
                     event['time'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                     log_event_to_django(event)
-=======
-                    camera_id=camera_id
-                )
-
-                if detection_data and 'events_to_log' in detection_data:
-                    for event in detection_data['events_to_log']:
-                        event['camera'] = camera_id
-                        event['time'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        log_event_to_django(event)
->>>>>>> 405223787f3316437e2b7c953342cec716061935
 
         # 编码当前帧
         ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
@@ -283,12 +268,8 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
         video_streams_cache.pop(cache_key, None)
     app.logger.info(f"Thread stopped and cache cleaned for {cache_key}")
 
-<<<<<<< HEAD
 
 def stream_generator(stream_id: str, ai_function_name: str, camera_id: str):
-=======
-def stream_generator(stream_id: str, ai_function_name: str):
->>>>>>> 405223787f3316437e2b7c953342cec716061935
     """
     从缓存中读取对应 camera_id 的帧并持续推送给前端。
     """
