@@ -1,0 +1,77 @@
+# ========================================
+# Python
+# ========================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# pipenv / venv / conda
+.venv/
+env/
+venv/
+ENV/
+*.env
+*.env.*
+
+# requirements lock
+Pipfile.lock
+poetry.lock
+
+# ========================================
+# YOLO / Ultralytics
+# ========================================
+runs/
+yolo_cache/
+*.pt
+*.onnx
+*.engine
+*.tflite
+*.mlmodel
+*.bin
+*.xml
+*.cache
+
+# ========================================
+# Jupyter Notebook
+# ========================================
+.ipynb_checkpoints/
+*.ipynb~ # 编辑中产生的临时文件
+
+# ========================================
+# VSCode
+# ========================================
+.vscode/
+*.code-workspace
+
+# ========================================
+# System
+# ========================================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+~$*
+
+# ========================================
+# Logs & Reports
+# ========================================
+*.log
+*.out
+*.err
+logs/
+report.txt
+
+# ========================================
+# Model training outputs
+# ========================================
+checkpoints/
+tensorboard/
+wandb/
+*.ckpt
+*.pth
+*.pb

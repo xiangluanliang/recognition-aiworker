@@ -1,0 +1,15 @@
+flask
+flask_cors
+gunicorn
+numpy
+opencv-python
+requests
+
+# 上次添加的
+ultralytics
+
+# 本次新增的
+transformers
+torch
+torchvision
+torchaudio
