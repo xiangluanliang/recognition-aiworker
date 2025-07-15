@@ -2,7 +2,7 @@
 
 import numpy as np
 import cv2
-from constants import POSE_PAIRS
+from .constants import POSE_PAIRS
 
 def draw_pose(frame, kpts, color=(0, 255, 0)):
     for point in kpts:
@@ -14,7 +14,9 @@ def draw_pose(frame, kpts, color=(0, 255, 0)):
             cv2.line(frame, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), color, 2)
 
 def get_center_point(kpts):
-    return ((kpts[5][0] + kpts[6][0]) / 2, (kpts[5][1] + kpts[6][1]) / 2)
+    x = np.mean(kpts[:, 0])
+    y = np.mean(kpts[:, 1])
+    return (int(x), int(y))
 
 def angle_between_points(a, b, c):
     ba = np.array(a) - np.array(b)

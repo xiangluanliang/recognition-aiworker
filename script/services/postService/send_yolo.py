@@ -1,5 +1,7 @@
 # api/services/postService/send_yolo.py
 
+from setup_django import *
+
 import requests
 import os
 from django.core.files.base import ContentFile
@@ -21,7 +23,6 @@ def download_file_from_worker(download_url: str) -> ContentFile | None:
     except requests.exceptions.RequestException as e:
         print(f"从AI Worker下载处理结果视频失败: {e}")
         return None
-
 
 def my_yolo(task_id: int, public_video_url: str):
     """
@@ -78,19 +79,19 @@ def my_yolo(task_id: int, public_video_url: str):
         task.analysis_result = {'error': str(e)}
         task.save()
 # 假设您已经定义了异常区域坐标和安全距离
-abnormal_zone_coords = [300, 300, 200, 200]
-safe_distance = 50  # 示例安全距离
-video_path = "D:\\Desktop\\abnormal_4.mp4"
-response = requests.post("http://localhost:5000/detect-abnormal", json={"video_path": video_path})
+# abnormal_zone_coords = [300, 300, 200, 200]
+# safe_distance = 50  # 示例安全距离
+# video_path = "D:\\Desktop\\abnormal_5.mp4"
+# response = requests.post("http://localhost:5000/detect-abnormal", json={"video_path": video_path})
 
-# response = requests.post(
-#     "http://localhost:5000/detect-abnormal",
-#     json={
-#         "video_path": video_path,
-#         "abnormal_zone_coords": abnormal_zone_coords,  # 传递异常区域坐标
-#         "safe_distance": safe_distance  # 传递安全距离
-#     }
-# )
+
+payload = {
+    "video_path": "D:\\Desktop\\abnormal_4.mp4",
+    "camera_id": 1,
+    "stay_seconds": 0.1,
+    "safe_distance": 100
+}
+response = requests.post("http://localhost:5000/detect-abnormal", json=payload)
 
 if response.ok:
     data = response.json()
@@ -99,3 +100,4 @@ if response.ok:
     print("处理后视频地址：", data["video_url"])
 else:
     print("请求失败:", response.text)
+
