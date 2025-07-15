@@ -10,7 +10,22 @@ import numpy as np
 from aiworker.yolo.constants import POSE_PAIRS, MEDIA_ROOT
 from aiworker.yolo.event_handlers import detect_people, match_person_id, detect_fight, check_fall, check_intrusion
 
+# 将数据存进去
+def log_event_to_django(event_data: dict):
+    def _send_request():
+        try:
+            url = os.path.join(DJANGO_API_BASE_URL, 'log-event/')
+            requests.post(
+                url,
+                json=event_data,
+                timeout=5,
+                headers={"Authorization": f"Token {DJANGO_API_TOKEN}"},
+                verify=False
+            )
+        except Exception as e:
+            app.logger.error(f"Failed to log event to Django: {e}")
 
+    threading.Thread(target=_send_request).start()  # ✅ 异步提交
 # 绘制
 def draw_pose(frame, kpts, color=(0, 255, 0)):
     for point in kpts:
@@ -20,7 +35,6 @@ def draw_pose(frame, kpts, color=(0, 255, 0)):
         if i < len(kpts) and j < len(kpts):
             pt1, pt2 = tuple(kpts[i]), tuple(kpts[j])
             cv2.line(frame, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), color, 2)
-
 
 # 保存视频切片内容
 def save_clip(pid, frame_idx, clip_buffer, fps, subfolder, event_type):
