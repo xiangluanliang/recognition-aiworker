@@ -11,7 +11,7 @@ class ReportGeneratorService:
     """
     一个封装了 AI 模型加载和文本生成逻辑的服务类。
     """
-    MODEL_NAME = "Qwen/Qwen1.5-1.8B-Chat"
+    MODEL_NAME = "Qwen/Qwen1.5-0.5B-Chat"
 
     def __init__(self):
         """
@@ -23,19 +23,8 @@ class ReportGeneratorService:
         logger.info(f"开始加载模型: {self.MODEL_NAME}...")
         try:
             # 加载分词器
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.MODEL_NAME,
-                trust_remote_code=True
-            )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.MODEL_NAME,
-                trust_remote_code=True
-            ).eval()
-            if torch.cuda.is_available():
-                self.model = self.model.to('cuda')
-                logger.info("模型已成功加载到 CUDA (GPU)。")
-            else:
-                logger.info("模型已成功加载到 CPU。")
+            self.tokenizer = None
+            self.model = None
 
         except Exception as e:
             logger.error(f"加载模型 {self.MODEL_NAME} 失败: {e}", exc_info=True)
@@ -52,8 +41,12 @@ class ReportGeneratorService:
             一个列表，包含 system 和 user 角色的消息字典。
         """
         # 基础提示语
-        prompt_lines = ["你是一个安防监控系统的智能助手，请根据以下监控统计数据生成一段简明扼要的中文日报。"]
-        prompt_lines.append("数据摘要如下：")
+        prompt_lines = [
+            "你是一个安防监控系统的智能助手，请根据以下监控统计数据生成一段简明扼要的中文日报。",
+            "内容应包括以下四部分（使用小标题分段）：①事件总体情况，②事件类型分布，③摄像头状态，④风险提示建议。\n",
+            "注意：不要编造我未提供的信息，不要做过多主观猜测。\n",
+            "特别说明：'区域入侵' 是指检测到人员进入了不允许进入的安全区域。\n\n",
+            "数据摘要如下："]
 
         # 优雅地处理嵌套的事件统计
         event_stats = summary_data.pop('各类型事件统计', {})
@@ -91,6 +84,22 @@ class ReportGeneratorService:
         """
         if not self.model or not self.tokenizer:
             raise RuntimeError("服务未正确初始化，模型或分词器不可用。")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+                self.MODEL_NAME,
+                trust_remote_code=True
+            )
+
+        AutoModelForCausalLM.from_pretrained(
+            self.MODEL_NAME,
+            trust_remote_code=True
+        ).eval()
+
+        if torch.cuda.is_available():
+            self.model = self.model.to('cuda')
+            logger.info("模型已成功加载到 CUDA (GPU)。")
+        else:
+            logger.info("模型已成功加载到 CPU。")
 
         # 使用 apply_chat_template 来格式化输入，这是与聊天模型交互的推荐方式
         input_text = self.tokenizer.apply_chat_template(

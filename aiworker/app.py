@@ -271,51 +271,198 @@ def log_event_to_django(event_data: dict):
     threading.Thread(target=_send_request).start()
 
 
-def stream_processor(ai_function_name: str, stream_id: str):
-    """
-    动态地调用AI函数，并智能地处理其特有的参数和返回结果。
-    """
-    process_function = AI_FUNCTIONS.get(ai_function_name)
-    if not process_function:
-        app.logger.error(f"Unknown AI function requested: {ai_function_name}")
-        return
+def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
+# def capture_and_process_thread(stream_id: str, ai_function_name: str):
+#     """
+#     这个函数在后台线程中运行，负责：
+#     1. 从RTMP服务器拉流。
+#     2. 根据ai_function_name对帧进行处理（或不处理）。
+#     3. 将处理后的帧编码为JPEG并存入全局缓存。
+#     """
+#     cache_key = (stream_id, ai_function_name)
+#     stream_lock = video_streams_cache[cache_key]['lock']
+#
+#     rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
+#     cap = cv2.VideoCapture(rtmp_url)
+#     if not cap.isOpened():
+#         app.logger.error(f"Cannot open stream: {rtmp_url}")
+#         # 可以考虑在缓存中设置一个错误状态
+#         return
+#
+#     app.logger.info(f"Thread started for stream '{stream_id}' with AI function '{ai_function_name}'")
+#
+#     frame_skip = 5
+#     frame_count = 0
+#     fail_count = 0
+#
+#     process_function = AI_FUNCTIONS.get(ai_function_name)
+#
+#     while True:
+#
+#         success, frame = cap.read()
+#         if not success:
+#             fail_count += 1
+#             if fail_count > 100:
+#                 app.logger.error(f"Stream '{stream_id}' disconnected. Stopping thread.")
+#                 break
+#             time.sleep(0.1)  # 稍作等待
+#             continue
+#         fail_count = 0
+#
+#         frame = cv2.resize(frame, (854, 480))
+#
+#         processed_frame = frame
+#
+#         if process_function and frame_count % frame_skip == 0:
+#             if ai_function_name == 'face_recognition':
+#                 processed_frame, detection_data = process_function(
+#                     frame.copy(),
+#                     known_faces_data=KNOWN_FACES_CACHE,
+#                     camera_id=int(stream_id)
+#                 )
+#             else:
+#                 processed_frame, detection_data = process_function(
+#                     frame.copy(),
+#                     camera_id=int(stream_id)
+#                 )
+#
+#             if detection_data and 'events_to_log' in detection_data:
+#                 for event in detection_data['events_to_log']:
+#                     event['camera'] = int(stream_id)
+#                     event['time'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+#                     log_event_to_django(event)
+#
+#         ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+#         if ret:
+#             with stream_lock:
+#                 video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
+#
+#         frame_count += 1
+#
+#     cap.release()
+#     with video_streams_cache[cache_key]['lock']:
+#         del video_streams_cache[cache_key]
+#     app.logger.info(f"Thread stopped and cache cleaned for {cache_key}")
 
-    rtmp_url = f'{RTMP_SERVER_URL}/{stream_id}'
+# def capture_and_process_thread(stream_id: str, ai_function_name: str):
+    """
+    这个函数在后台线程中运行，负责：
+    1.从RTMP服务器拉流。
+    2.根据ai_function_name对帧进行处理（或不处理）。
+    3.将处理后的帧编码为JPEG并存入全局缓存。
+    """
+    cache_key = (stream_id, ai_function_name, camera_id)
+    stream_lock = video_streams_cache[cache_key]['lock']
+
+    camera_id_int = int(camera_id)
+
+    rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
     cap = cv2.VideoCapture(rtmp_url)
     if not cap.isOpened():
         app.logger.error(f"Cannot open stream: {rtmp_url}")
         return
 
-    app.logger.info(f"Processing stream '{stream_id}' with AI function '{ai_function_name}'")
+    app.logger.info(f"Thread started for stream '{stream_id}' with AI function '{ai_function_name}', camera '{camera_id}'")
 
     frame_skip = 5
     frame_count = 0
+    fail_count = 0
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    camera_id = int(stream_id)
+
+    # ✅ 初始化异常检测缓存
+    from collections import defaultdict, deque
+    prev_centers = {}
+    fall_clip_buffer = defaultdict(lambda: deque(maxlen=int(fps * 5)))
+    person_history = defaultdict(list)
+    person_fall_status = defaultdict(lambda: {'fall_frame_count': 0, 'is_falling': False})
+    zone_status_cache = defaultdict(dict)
+    recorded_intrusions = set()
+    recorded_conflicts = set()
+    fight_kpts_history = defaultdict(lambda: deque(maxlen=5))
+
+    # ✅ 拉取摄像头异常区域
+    def fetch_warning_zones(camera_id):
+        try:
+            response = requests.get(
+                f"{DJANGO_API_BASE_URL}get-warning-zones/{camera_id}/",
+                headers={"Authorization": f"Token {DJANGO_API_TOKEN}"},
+                verify=False
+            )
+            response.raise_for_status()
+            return response.json()  # 格式: {camera_id: [[(x, y), (x, y), ...], ...]}
+        except Exception as e:
+            app.logger.error(f"Failed to fetch warning zones: {e}")
+            return {camera_id: []}
+
+    warning_zone_map = fetch_warning_zones(camera_id)
+
+    # ✅ 伪造 camera 对象（简化处理）
+    camera = {
+        'id': camera_id,
+        'name': f"Camera {camera_id}"
+    }
+
+    process_function = AI_FUNCTIONS.get(ai_function_name)
 
     while True:
         success, frame = cap.read()
         if not success:
-            app.logger.warning(f"Failed to grab frame from stream {stream_id}. Exiting stream processor.")
-            break
+            fail_count += 1
+            if fail_count > 100:
+                app.logger.error(f"Stream '{stream_id}' disconnected. Stopping thread.")
+                break
+            time.sleep(0.1)
+            continue
+        fail_count = 0
 
-        processed_frame, detection_data = None, None
+        frame = cv2.resize(frame, (854, 480))
+        processed_frame = frame
 
-        if frame_count % frame_skip == 0:
+        # 每隔 frame_skip 帧处理一次
+        if process_function and frame_count % frame_skip == 0:
             if ai_function_name == 'face_recognition':
                 processed_frame, detection_data = process_function(
                     frame,
                     known_faces_data=KNOWN_FACES_CACHE,
-                    camera_id=int(stream_id)
+                    camera_id=camera_id_int
                 )
+
+            elif ai_function_name == 'abnormal_detection':
+                from aiworker.yolo.yolo_abnormal_detector import process_abnormal_single_frame
+
+                processed_frame = process_abnormal_single_frame(
+                    frame=frame.copy(),
+                    frame_idx=frame_count,
+                    fps=fps,
+                    camera_id=camera_id,
+                    stay_seconds=5,  # 可动态传入
+                    safe_distance=50.0,  # 可动态传入
+                    prev_centers=prev_centers,
+                    fall_clip_buffer=fall_clip_buffer,
+                    person_history=person_history,
+                    person_fall_status=person_fall_status,
+                    zone_status_cache=zone_status_cache,
+                    recorded_intrusions=recorded_intrusions,
+                    recorded_conflicts=recorded_conflicts,
+                    fight_kpts_history=fight_kpts_history,
+                    warning_zone_map=warning_zone_map,
+                    camera=camera,
+                    log_event_to_django=log_event_to_django
+                )
+
             else:
+                # 其他功能（人流量统计等）
                 processed_frame, detection_data = process_function(
-                    frame,
-                    camera_id=int(stream_id)
+                    frame.copy(),
+                    camera_id=camera_id_int
                 )
 
             # --- Stream Processor: 统一处理报警事件日志发送 ---
             if detection_data and 'events_to_log' in detection_data:
                 for event in detection_data['events_to_log']:
-                    event['camera'] = int(stream_id)
+                    event['camera'] = camera_id
                     event['time'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                     log_event_to_django(event)
         else:
@@ -337,19 +484,67 @@ def stream_processor(ai_function_name: str, stream_id: str):
 
         # 这里的 processed_frame 可能是来自 AI 函数的结果，也可能是原始帧 (如果跳过处理)
         if processed_frame is None: processed_frame = frame.copy() # 确保不为 None
-
-        ret, buffer = cv2.imencode('.jpg', processed_frame)
+        ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
         if ret:
             yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
         frame_count += 1
     cap.release()
+    with stream_lock:
+        video_streams_cache.pop(cache_key, None)
+    app.logger.info(f"Thread stopped and cache cleaned for {cache_key}")
 
 
-@app.route('/<ai_function_name>/<stream_id>')
-def video_feed(ai_function_name: str, stream_id: str):
+def stream_generator(stream_id: str, ai_function_name: str, camera_id: str):
+    """
+    从缓存中读取对应 camera_id 的帧并持续推送给前端。
+    """
+    cache_key = (stream_id, ai_function_name, camera_id)
+
+    # 等待后台线程生成第一帧
+    while cache_key not in video_streams_cache or 'frame_bytes' not in video_streams_cache[cache_key]:
+        app.logger.debug(f"Waiting for first frame of {cache_key}...")
+        time.sleep(0.5)
+        if cache_key not in video_streams_cache:
+            app.logger.warning(f"Stream {cache_key} seems to have failed to start.")
+            return
+
+    app.logger.info(f"Client connected to stream generator for {cache_key}")
+
+    while cache_key in video_streams_cache:
+        try:
+            with video_streams_cache[cache_key]['lock']:
+                frame_bytes = video_streams_cache[cache_key].get('frame_bytes')
+
+            if frame_bytes:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+            time.sleep(1 / 20)  # 控制帧率
+        except KeyError:
+            app.logger.warning(f"Cache key {cache_key} was removed. Closing generator.")
+            break
+
+@app.route('/<ai_function_name>/<stream_id>/<camera_id>')
+def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
+    """
+    Flask 路由：处理视频流请求，按 (stream_id, ai_function_name, camera_id) 缓存并启动线程。
+    """
+    cache_key = (stream_id, ai_function_name, camera_id)
+
+    if cache_key not in video_streams_cache:
+        app.logger.info(f"Cache miss for {cache_key}. Creating new processing thread.")
+        lock = threading.Lock()
+        thread = threading.Thread(
+            target=capture_and_process_thread,
+            args=(stream_id, ai_function_name, camera_id),  # 传入 camera_id
+            daemon=True
+        )
+        video_streams_cache[cache_key] = {'thread': thread, 'lock': lock, 'frame_bytes': None}
+        thread.start()
+
     return Response(
-        stream_processor(ai_function_name, stream_id),
+        stream_generator(stream_id, ai_function_name, camera_id),  # 传入 camera_id
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
 
