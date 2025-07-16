@@ -1,5 +1,7 @@
 # app.py
 import base64
+import json
+
 import cv2
 import numpy as np
 import threading
@@ -7,12 +9,13 @@ import logging
 import time
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
+from flask_sock import Sock
 
 # --- 导入重构后的模块 ---
 from aiworker.config import *
 from aiworker.services.api_client import fetch_known_faces, log_event
 from aiworker.face.vision_service import VisionServiceWorker
-from aiworker.face.face_handler import process_frame_for_api, process_frame_for_stream as process_face_stream
+from aiworker.face.face_handler import process_frame_for_api
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
 from aiworker.yolo.yolo_detector import YoloDetector
 
@@ -21,6 +24,7 @@ from aiworker.yolo.yolo_detector import YoloDetector
 # --- Flask App 初始化 ---
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - (AI-Worker) - %(message)s')
 
 # --- 全局实例和缓存 ---
@@ -30,15 +34,7 @@ yolo_detector = YoloDetector()
 
 # 全局缓存
 video_streams_cache = {}
-known_faces_cache = []
-AI_FUNCTIONS = ['face_recognition', 'abnormal_detection']
-
-# --- 后台任务：定时刷新已知人脸缓存 ---
-def schedule_face_cache_refresh():
-    global known_faces_cache
-    known_faces_cache = fetch_known_faces()
-    threading.Timer(CACHE_REFRESH_INTERVAL, schedule_face_cache_refresh).start()
-
+AI_FUNCTIONS = ['abnormal_detection']
 
 def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
     cache_key = (stream_id, ai_function_name, camera_id)
@@ -71,19 +67,14 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
         # --- 跳帧逻辑 ---
         if frame_count % FRAME_SKIP_RATE != 0:
             frame_count += 1
-            continue  # 跳过此帧的AI处理
+            continue
 
         processed_frame = frame
-        if ai_function_name == 'face_recognition':
-            # 人脸识别的跳帧逻辑在其内部处理，以保证UI流畅
-            processed_frame, _ = process_face_stream(
-                vision_worker, frame, known_faces_cache, camera_id_int, perform_heavy_ai=True
-            )
-        elif ai_function_name == 'abnormal_detection' and processor_instance:
+        if ai_function_name == 'abnormal_detection' and processor_instance:
             processed_frame, _ = processor_instance.process_frame(frame)
 
         # 将处理后的帧放入缓存
-        ret, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ret:
             with stream_lock:
                 video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
@@ -97,7 +88,7 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
 @app.route('/<ai_function_name>/<stream_id>/<camera_id>')
 def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
     if ai_function_name not in AI_FUNCTIONS:
-        return Response(f"Error: AI function '{ai_function_name}' not found.", status=404)
+        return Response(f"Error: AI stream function '{ai_function_name}' not found.", status=404)
 
     cache_key = (stream_id, ai_function_name, camera_id)
     if cache_key not in video_streams_cache:
@@ -105,7 +96,7 @@ def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
         video_streams_cache[cache_key] = {'lock': threading.Lock(), 'frame_bytes': None}
         thread = threading.Thread(
             target=capture_and_process_thread,
-            args=(stream_id, ai_function_name, camera_id, video_streams_cache, vision_worker, known_faces_cache),
+            args=(stream_id, ai_function_name, camera_id),
             daemon=True
         )
         thread.start()
@@ -127,7 +118,6 @@ def stream_generator(cache_key):
         time.sleep(1 / 25)  # 控制推流帧率
 
 
-# --- 单帧识别API端点 ---
 @app.route('/ai/recognize-frame', methods=['POST'])
 def recognize_frame_api():
     image_base64 = request.json.get('image_data')
@@ -141,20 +131,70 @@ def recognize_frame_api():
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'无效的图像数据: {e}'}), 400
 
-    # 调用独立的API处理函数
-    response_json, _ = process_frame_for_api(vision_worker, frame, known_faces_cache)
+    known_faces_data = fetch_known_faces()
+    response_json, _ = process_frame_for_api(vision_worker, frame, known_faces_data)
 
-    # 记录事件 (API调用通常不上报普通识别事件，只上报欺诈或危险人员)
-    if response_json.get('persons'):
-        for person in response_json['persons']:
-            if person.get('identity') == 'SPOOF' or person.get('person_state') == 2:
-                log_event({'event_type': 'DANGER_OR_SPOOF_API', 'details': person})
+    if not response_json.get('liveness_passed', True):
+        log_event({'event_type': 'LIVENESS_FRAUD_API', 'details': response_json})
 
     return jsonify(response_json)
+
+@sock.route('/ws/liveness_check')
+def liveness_check_websocket(ws):
+    """
+    处理活体检测的WebSocket连接。
+    每个连接都是一个独立的、有状态的检测会话。
+    """
+    app.logger.info("WebSocket client connected for liveness check.")
+
+    session_vision_worker = VisionServiceWorker()
+    known_faces_data = fetch_known_faces()
+    frame_counter = 0
+
+    try:
+        while True:
+            image_data_base64 = ws.receive(timeout=10)
+            if image_data_base64 is None:
+                app.logger.warning("WebSocket timed out waiting for frame.")
+                break
+
+            frame_counter += 1
+
+            try:
+                img_bytes = base64.b64decode(image_data_base64.split(',', 1)[-1])
+                frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+                if frame is None: continue
+            except:
+                continue
+
+            # 复用API处理器，因为它有最严格的活体检测逻辑
+            response_json, _ = process_frame_for_api(
+                session_vision_worker, frame, known_faces_data
+            )
+
+            liveness_passed = response_json.get('liveness_passed', False)
+            persons_detected = len(response_json.get('persons', [])) > 0
+
+            # 获得最终结果的条件：
+            # A. 明确检测到欺诈 (liveness_passed is False and 有人脸)
+            # B. 明确检测到真人 (liveness_passed is True and 有人脸)
+            # C. 检测超时
+            is_final_result = (persons_detected and liveness_passed is False) or \
+                              (persons_detected and liveness_passed is True) or \
+                              (frame_counter > BLINK_TIMEOUT_FRAMES)
+
+            if is_final_result:
+                app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
+                ws.send(json.dumps(response_json))
+                break
+
+    except Exception as e:
+        app.logger.error(f"Error in liveness WebSocket: {e}", exc_info=True)
+    finally:
+        app.logger.info("WebSocket client disconnected.")
 
 
 # --- 服务启动 ---
 if __name__ == '__main__':
     app.logger.info(">>> Unified AI Worker Service Starting (Refactored) <<<")
-    threading.Thread(target=schedule_face_cache_refresh, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, threaded=True)
