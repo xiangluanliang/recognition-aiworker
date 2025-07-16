@@ -19,6 +19,12 @@ from aiworker.face.face_handler import process_frame_for_api
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
 from aiworker.yolo.yolo_detector import YoloDetector
 
+# 导入音频模块
+from aiworker.audio.event_handlers import handle_audio_file
+from aiworker.audio.preprocess import load_audio
+import subprocess
+import tempfile
+import os
 # from aiworker.report.report_generator import process_report_generation
 
 # --- Flask App 初始化 ---
@@ -30,7 +36,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - (A
 # --- 全局实例和缓存 ---
 # 全局AI模型实例 (重量级对象，只加载一次)
 vision_worker = VisionServiceWorker()
-yolo_detector = YoloDetector()
+yolo_detector = YoloDetector(YOLO_POSE_MODEL_FILENAME)
 
 # 全局缓存
 video_streams_cache = {}
@@ -45,6 +51,40 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
     cap = cv2.VideoCapture(rtmp_url)
     if not cap.isOpened():
         app.logger.error(f"Cannot open stream: {rtmp_url}")
+
+        # 启动音频检测线程，循环拉取音频并处理
+        def audio_detect_thread(rtmp_url_inner, camera_id_inner):
+            import subprocess
+            import tempfile
+            import os
+            import time
+
+            while True:
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+                        audio_path = tmp_audio.name
+
+                    command = [
+                        "ffmpeg", "-y", "-i", rtmp_url_inner,
+                        "-t", "5",  # 截取5秒音频
+                        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                        audio_path
+                    ]
+                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                    # 调用你写好的音频处理函数
+                    handle_audio_file(audio_path)
+
+                except Exception as e:
+                    app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
+
+                finally:
+                    if os.path.exists(audio_path):
+                        os.remove(audio_path)
+
+                time.sleep(10)  # 每10秒处理一次
+
+        threading.Thread(target=audio_detect_thread, args=(rtmp_url, camera_id), daemon=True).start()
         return
 
     app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
@@ -114,7 +154,7 @@ def stream_generator(cache_key):
         with video_streams_cache[cache_key]['lock']:
             frame_bytes = video_streams_cache[cache_key].get('frame_bytes')
         if frame_bytes:
-            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n'
         time.sleep(1 / 25)  # 控制推流帧率
 
 
@@ -167,7 +207,7 @@ def liveness_check_websocket(ws):
             except Exception:
                 continue
 
-            if (frame_counter % frame_skip_rate == 0):
+            if frame_counter % frame_skip_rate == 0:
                 response_json, _ = process_frame_for_api(
                     session_vision_worker, frame, known_faces_data
                 )
