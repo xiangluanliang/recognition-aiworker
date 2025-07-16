@@ -24,12 +24,13 @@ class LivenessDetector:
         self.mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=1,
+            refine_landmarks=True,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5
         )
 
-        self.LEFT_EYE_INDICES = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
-        self.RIGHT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+        self.LEFT_EYE_EAR_INDICES = [362, 385, 387, 263, 373, 380]
+        self.RIGHT_EYE_EAR_INDICES = [33, 160, 158, 133, 153, 144]
 
         self.reset_blink_state()
 
@@ -62,9 +63,9 @@ class LivenessDetector:
             h, w, _ = frame.shape
 
             left_eye_points = np.array(
-                [[face_landmarks[i].x * w, face_landmarks[i].y * h] for i in self.LEFT_EYE_INDICES])
+                [[face_landmarks[i].x * w, face_landmarks[i].y * h] for i in self.LEFT_EYE_EAR_INDICES])
             right_eye_points = np.array(
-                [[face_landmarks[i].x * w, face_landmarks[i].y * h] for i in self.RIGHT_EYE_INDICES])
+                [[face_landmarks[i].x * w, face_landmarks[i].y * h] for i in self.RIGHT_EYE_EAR_INDICES])
 
             leftEAR = self._eye_aspect_ratio(left_eye_points)
             rightEAR = self._eye_aspect_ratio(right_eye_points)
