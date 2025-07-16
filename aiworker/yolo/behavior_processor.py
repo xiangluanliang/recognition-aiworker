@@ -96,20 +96,20 @@ class AbnormalBehaviorProcessor:
             self.fight_kpts_history[ids[i]].append(kpts.copy())
 
         # 4. 事件检测 (调用EventCheckers模块)
-        conflict_pairs = detect_fight(
+        conflict_pairs ,conflict_scores= detect_fight(
             ids, centers, self.fight_kpts_history,
             FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD
         )
 
         all_event_pids = set()  # 记录本帧所有参与事件的人员ID，用于高亮绘制
         # 处理打架事件
-        for pid1, pid2 in conflict_pairs:
+        for pid1, pid2,conflict_scores in conflict_pairs:
             for pid in [pid1, pid2]:
                 all_event_pids.add(pid)
                 # 10秒内对同一个人只上报一次打架事件，避免事件风暴
                 if (pid, int(time.time()) // 10) in self.recorded_conflicts: continue
                 self.recorded_conflicts.add((pid, int(time.time()) // 10))
-                self._log_event('conflict', pid, 0.99, frame)
+                self._log_event('conflict', pid, conflict_scores, frame)
 
         # 遍历每个人，检测摔倒和入侵
         for i, kpts in enumerate(kpts_list):

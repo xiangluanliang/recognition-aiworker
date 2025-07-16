@@ -88,7 +88,6 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
         status['is_falling'] = False
     return is_fall, False,total_score
 
-
 # --- Intrusion Detection Logic ---
 def _point_in_polygon(point, polygon):
     return Path(polygon).contains_point(point)
@@ -171,7 +170,6 @@ def _upper_body_motion_std(kpts_deque):
     upper_body = np.array(kpts_deque)[:, upper_kpts_indices, :]
     return np.std(upper_body, axis=0).mean()
 
-
 def _estimate_orientation(kpts):
     shoulder_mid = (kpts[5] + kpts[6]) / 2
     direction = kpts[0] - shoulder_mid
@@ -179,18 +177,41 @@ def _estimate_orientation(kpts):
 
 def detect_fight(ids, centers, fight_kpts_history, dist_thresh, motion_thresh, orient_thresh):
     conflicts = []
+
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             pid1, pid2 = ids[i], ids[j]
-            dist = np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
 
-            if dist < dist_thresh:
-                if len(fight_kpts_history[pid1]) == 5 and len(fight_kpts_history[pid2]) == 5:
-                    motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
-                    motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
-                    if motion1 > motion_thresh and motion2 > motion_thresh:
-                        vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
-                        vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
-                        if np.dot(vec1, vec2) < -orient_thresh:  # 向量点积为负表示方向相反（面对面）
-                            conflicts.append((pid1, pid2))
+            # 1. 距离判断
+            dist = np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
+            if dist >= dist_thresh:
+                continue
+            dist_score = max(0.0, 1.0 - dist / dist_thresh)
+
+            # 2. 判断关键点历史是否足够
+            if len(fight_kpts_history[pid1]) < 5 or len(fight_kpts_history[pid2]) < 5:
+                continue
+
+            # 3. 上半身运动判断
+            motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
+            motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
+            if motion1 < motion_thresh or motion2 < motion_thresh:
+                continue
+            motion_score = min((motion1 + motion2) / 2 / motion_thresh, 1.0)
+
+            # 4. 朝向判断
+            vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
+            vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
+            dot = np.dot(vec1, vec2)
+            if dot >= -orient_thresh:
+                continue
+            face_score = min(1.0, (abs(dot) - orient_thresh) / (1.0 - orient_thresh))
+
+            # 5. 综合评分
+            fight_score = round(0.4 * motion_score + 0.3 * dist_score + 0.3 * face_score, 3)
+
+            # 6. 最终加入结果
+            conflicts.append((pid1, pid2, fight_score))
+
     return conflicts
+
