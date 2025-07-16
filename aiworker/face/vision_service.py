@@ -1,14 +1,23 @@
-import os
+# aiworker/face/vision_service.py
 import cv2
+import os
 import numpy as np
 import logging
-from scipy.spatial.distance import euclidean
 import onnxruntime
-import dlib
-from imutils import face_utils
-from aiworker.config import FACE_RECOGNITION_MODEL_FILENAME, DLIB_LANDMARK_PREDICTOR_FILENAME, OULU_LIVENESS_THRESHOLD, \
-    OULU_LIVENESS_INPUT_SIZE, MIN_EFFECTIVE_LIVENESS_ROI_SIZE, EYE_AR_CONSEC_FRAMES, BLINK_TIMEOUT_FRAMES, \
-    EYE_AR_THRESH, MODEL_DIR
+
+# --- 导入我们拆分出去的子模块和配置 ---
+from .liveness_detector import LivenessDetector
+from aiworker.config import (
+    MODEL_DIR,
+    OULU_LIVENESS_MODEL_FILENAME,
+    DLIB_LANDMARK_PREDICTOR_FILENAME,
+    FACE_DETECTOR_PROTOTXT_FILENAME,
+    FACE_DETECTOR_WEIGHTS_FILENAME,
+    FACE_RECOGNITION_MODEL_FILENAME,
+    FACE_DETECTOR_CONFIDENCE_THRESHOLD,
+    FACE_RECOGNITION_THRESHOLD
+)
+from scipy.spatial.distance import euclidean
 
 
 class VisionServiceWorker:
@@ -20,86 +29,38 @@ class VisionServiceWorker:
         return cls._instance
 
     def __init__(self):
-        if not hasattr(self, '_initialized'):
-            self._initialized = True
-            self.FACE_DETECTOR_PROTOTXT_PATH = os.path.join(MODEL_DIR, 'opencv_face_detector.pbtxt')
-            self.FACE_DETECTOR_WEIGHTS_PATH = os.path.join(MODEL_DIR, 'opencv_face_detector_uint8.pb')
+        if hasattr(self, '_initialized'):
+            return
 
-            self.FACE_RECOGNITION_MODEL_PATH = os.path.join(MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Initializing VisionServiceWorker...")
 
-            self.OULU_LIVENESS_MODEL_PATH = os.path.join(MODEL_DIR, 'OULU_Protocol_2_model_0_0.onnx')
-            self.DLIB_LANDMARK_PREDICTOR_PATH = os.path.join(MODEL_DIR, DLIB_LANDMARK_PREDICTOR_FILENAME)
+        oulu_model_path = os.path.join(MODEL_DIR, OULU_LIVENESS_MODEL_FILENAME)
+        dlib_predictor_path = os.path.join(MODEL_DIR, DLIB_LANDMARK_PREDICTOR_FILENAME)
+        face_detector_prototxt = os.path.join(MODEL_DIR, FACE_DETECTOR_PROTOTXT_FILENAME)
+        face_detector_weights = os.path.join(MODEL_DIR, FACE_DETECTOR_WEIGHTS_FILENAME)
+        face_rec_model_path = os.path.join(MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
 
-            self.FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.4
-            self.FACE_RECOGNITION_THRESHOLD = 0.8
-
-            self.DLIB_FACE_DETECTOR = dlib.get_frontal_face_detector()
-            self.DLIB_LANDMARK_PREDICTOR = None
-            self.lStart, self.lEnd = None, None
-            self.rStart, self.rEnd = None, None
-
-            self.blink_counter = 0
-            self.total_blinks = 0
-            self.blink_detection_active = False
-            self.frames_since_last_blink = 0
-
-            self.FACE_DETECTOR_NET = None
-            self.FACE_RECOGNITION_NET = None
-            self.OULU_LIVENESS_SESSION = None
-
-            # FIX: Initialize self.logger BEFORE calling _load_all_models()
-            self.logger = logging.getLogger(__name__)
-            self._load_all_models()
-
-    def _load_all_models(self):
-        self.logger.info("Loading AI models...")
         try:
-            if not os.path.exists(self.FACE_DETECTOR_PROTOTXT_PATH):
-                raise FileNotFoundError(f"Face detector prototxt not found: {self.FACE_DETECTOR_PROTOTXT_PATH}")
-            if not os.path.exists(self.FACE_DETECTOR_WEIGHTS_PATH):
-                raise FileNotFoundError(f"Face detector weights not found: {self.FACE_DETECTOR_WEIGHTS_PATH}")
-            self.FACE_DETECTOR_NET = cv2.dnn.readNet(self.FACE_DETECTOR_PROTOTXT_PATH, self.FACE_DETECTOR_WEIGHTS_PATH)
+            # ✅ **核心修正：在此处创建并持有 LivenessDetector 实例**
+            self.liveness_detector = LivenessDetector(oulu_model_path, dlib_predictor_path)
 
-            if not os.path.exists(self.FACE_RECOGNITION_MODEL_PATH):
-                raise FileNotFoundError(f"Face recognition model not found: {self.FACE_RECOGNITION_MODEL_PATH}")
-            self.FACE_RECOGNITION_NET = onnxruntime.InferenceSession(self.FACE_RECOGNITION_MODEL_PATH, providers=['CPUExecutionProvider'])
-            self.face_rec_input_name = self.FACE_RECOGNITION_NET.get_inputs()[0].name
-            self.face_rec_output_name = self.FACE_RECOGNITION_NET.get_outputs()[0].name
+            # 加载人脸检测器 (OpenCV DNN)
+            self.face_detector_net = cv2.dnn.readNet(face_detector_prototxt, face_detector_weights)
 
-            if not os.path.exists(self.OULU_LIVENESS_MODEL_PATH):
-                raise FileNotFoundError(f"OULU_Protocol_2_model_0_0.onnx not found: {self.OULU_LIVENESS_MODEL_PATH}")
-            self.OULU_LIVENESS_SESSION = onnxruntime.InferenceSession(
-                self.OULU_LIVENESS_MODEL_PATH,
-                providers=['CPUExecutionProvider']
-            )
-            self.oulu_liveness_input_name = self.OULU_LIVENESS_SESSION.get_inputs()[0].name
-            self.oulu_liveness_output_name = self.OULU_LIVENESS_SESSION.get_outputs()[0].name
+            # 加载人脸识别模型 (ONNX)
+            self.face_recognition_net = onnxruntime.InferenceSession(face_rec_model_path,
+                                                                     providers=['CPUExecutionProvider'])
+            self.face_rec_input_name = self.face_recognition_net.get_inputs()[0].name
+            self.face_rec_output_name = self.face_recognition_net.get_outputs()[0].name
 
-            if not os.path.exists(self.DLIB_LANDMARK_PREDICTOR_PATH):
-                raise FileNotFoundError(f"Dlib landmark predictor not found: {self.DLIB_LANDMARK_PREDICTOR_PATH}")
-            self.DLIB_LANDMARK_PREDICTOR = dlib.shape_predictor(self.DLIB_LANDMARK_PREDICTOR_PATH)
-            (self.lStart, self.lEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
-            (self.rStart, self.rEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
+            self.logger.info("All vision models loaded successfully.")
 
-            self.logger.info("All AI models loaded successfully.")
         except Exception as e:
-            self.logger.critical(f"CRITICAL: Failed to load AI models: {e}. AI functions may not work correctly.")
-            self.FACE_DETECTOR_NET = None
-            self.FACE_RECOGNITION_NET = None
-            self.OULU_LIVENESS_SESSION = None
-            self.DLIB_LANDMARK_PREDICTOR = None
-            raise RuntimeError("One or more AI models failed to load.")
+            self.logger.critical(f"CRITICAL: Failed to load vision models: {e}")
+            raise RuntimeError("One or more vision models failed to load.")
 
-    def preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
-        if frame is None or frame.size == 0 or frame.shape[0] == 0 or frame.shape[1] == 0:
-            self.logger.warning("Received empty or invalid frame for preprocessing. Returning original frame.")
-            return frame
-        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        equalized_gray = clahe.apply(gray_frame)
-        processed_frame = cv2.cvtColor(equalized_gray, cv2.COLOR_GRAY2BGR)
-        self.logger.debug("Applied CLAHE preprocessing to frame.")
-        return processed_frame
+        self._initialized = True
 
     def detect_faces(self, frame: np.ndarray) -> list:
         if self.FACE_DETECTOR_NET is None:
@@ -109,7 +70,8 @@ class VisionServiceWorker:
             self.logger.warning("Received empty or invalid frame for face detection.")
             return []
         (h, w) = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False, crop=False)
+        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0),
+                                     swapRB=False, crop=False)
         self.FACE_DETECTOR_NET.setInput(blob)
         detections = self.FACE_DETECTOR_NET.forward()
         detected_faces = []
@@ -122,10 +84,11 @@ class VisionServiceWorker:
                 endX, endY = min(w, endX), min(h, endY)
                 if (endX - startX) > 0 and (endY - startY) > 0:
                     detected_faces.append({'box_coords': [startX, startY, endX, endY], 'confidence': float(confidence)})
-        self.logger.debug(f"Detected {len(detected_faces)} faces with confidence > {self.FACE_DETECTOR_CONFIDENCE_THRESHOLD}")
+        self.logger.debug(
+            f"Detected {len(detected_faces)} faces with confidence > {self.FACE_DETECTOR_CONFIDENCE_THRESHOLD}")
         return detected_faces
 
-    def extract_face_features(self, face_image: np.ndarray) -> np.ndarray:
+    def _extract_face_features(self, face_image: np.ndarray) -> np.ndarray:
         if self.FACE_RECOGNITION_NET is None:
             self.logger.warning("Face recognition model not loaded. Cannot extract features.")
             return np.array([])
@@ -138,57 +101,60 @@ class VisionServiceWorker:
         processed_image = (processed_image - 0.5) * 2.0
         input_tensor = np.transpose(processed_image, (2, 0, 1))
         input_tensor = np.expand_dims(input_tensor, axis=0)
-        features = self.FACE_RECOGNITION_NET.run([self.face_rec_output_name], {self.face_rec_input_name: input_tensor})[0]
+        features = self.FACE_RECOGNITION_NET.run([self.face_rec_output_name], {self.face_rec_input_name: input_tensor})[
+            0]
         self.logger.debug(f"Extracted face features of shape: {features.shape}")
         return features.flatten()
 
-    def recognize_face_identity(self, frame: np.ndarray, known_faces_data: list) -> list:
-        self.logger.debug("Starting face recognition process.")
+    def recognize_faces(self, frame: np.ndarray, detected_faces: list, known_faces_data: list) -> list:
+        """
+        将检测到的人脸与已知人脸库进行比对，返回每个人的身份信息。
+        """
         results = []
-        # Note: This method is designed to perform its own face detection if called directly.
-        # In local_ai_service.py's current flow, `detect_faces` is called first, then `perform_liveness_check`,
-        # then `recognize_face_identity`. For efficiency, `recognize_face_identity` could ideally take `detected_faces_info`
-        # as an argument. However, to minimize structural changes, we'll keep its current signature,
-        # acknowledging that `local_ai_service.py` will handle the overall flow and filtering.
-        preprocessed_frame = self.preprocess_frame(frame)
-        detected_faces = self.detect_faces(preprocessed_frame)
-
         for face_info in detected_faces:
             x1, y1, x2, y2 = face_info['box_coords']
             cropped_face = frame[y1:y2, x1:x2]
 
             if cropped_face.size == 0:
-                self.logger.warning("Cropped face region is empty for recognition.")
+                self.logger.warning("Cropped face region is empty, skipping recognition.")
                 continue
 
-            face_embedding = self.extract_face_features(cropped_face)
+            # 提取当前人脸的特征
+            face_embedding = self._extract_face_features(cropped_face)
             if face_embedding.size == 0:
-                self.logger.warning("Failed to extract features from face region for recognition.")
+                self.logger.warning("Failed to extract features from face, skipping recognition.")
                 continue
 
+            # 初始化最佳匹配结果
             min_distance = float('inf')
-            identity = 'Stranger'
-            person_id = None
-            person_state = None
+            best_match_identity = 'Stranger'
+            best_match_person_id = None
+            best_match_person_state = None
 
+            # 遍历已知人脸库进行比对
             for known_face in known_faces_data:
                 if 'face_embedding' not in known_face or known_face['face_embedding'] is None:
                     continue
 
                 known_embedding = np.array(known_face['face_embedding'], dtype=np.float32)
+
+                # 计算欧氏距离
                 distance = euclidean(face_embedding, known_embedding)
 
+                # 如果找到了更近的距离，则更新最佳匹配
                 if distance < min_distance:
                     min_distance = distance
-                    identity = known_face['name']
-                    person_id = known_face['id']
-                    person_state = known_face['state']
+                    best_match_identity = known_face.get('name', 'Unknown')
+                    best_match_person_id = known_face.get('id')
+                    best_match_person_state = known_face.get('state')
 
-            final_identity = identity if min_distance < self.FACE_RECOGNITION_THRESHOLD else 'Stranger'
-            final_person_id = person_id if final_identity != 'Stranger' else None
-            final_person_state = person_state if final_identity != 'Stranger' else None
-
+            # 根据阈值决定最终身份
+            final_identity = best_match_identity if min_distance < FACE_RECOGNITION_THRESHOLD else 'Stranger'
+            final_person_id = best_match_person_id if final_identity != 'Stranger' else None
+            final_person_state = best_match_person_state if final_identity != 'Stranger' else None
             final_distance = float(min_distance) if min_distance != float('inf') else None
+
+            # 将完整结果添加到列表
             results.append({
                 'box_coords': [int(c) for c in face_info['box_coords']],
                 'confidence': float(face_info['confidence']),
@@ -198,154 +164,4 @@ class VisionServiceWorker:
                 'person_state': int(final_person_state) if final_person_state is not None else None,
             })
 
-        self.logger.debug(f"Recognition finished. Found {len(results)} results.")
         return results
-
-    def _oulu_liveness_preprocess_and_infer(self, cropped_face: np.ndarray) -> (float, str):
-        if self.OULU_LIVENESS_SESSION is None:
-            raise RuntimeError("OULU_Protocol_2_model_0_0.onnx model not loaded.")
-        processed_image = cv2.resize(cropped_face, OULU_LIVENESS_INPUT_SIZE)
-        processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB)
-        processed_image = processed_image.astype(np.float32)
-        processed_image = (processed_image - 127.5) / 127.5
-        input_tensor = np.transpose(processed_image, (2, 0, 1))
-        input_tensor = np.expand_dims(input_tensor, axis=0)
-        oulu_outputs = self.OULU_LIVENESS_SESSION.run([self.oulu_liveness_output_name], {self.oulu_liveness_input_name: input_tensor})[0]
-        flattened_output = oulu_outputs.flatten()
-        if flattened_output.size > 0:
-            liveness_score = flattened_output[0].item()
-            predicted_class_name = "LIVE" if liveness_score >= OULU_LIVENESS_THRESHOLD else "SPOOF"
-        else:
-            self.logger.error(f"OULU Liveness model output is empty: {oulu_outputs.shape}")
-            liveness_score = 0.0
-            predicted_class_name = "ERROR_EMPTY_OUTPUT"
-        return liveness_score, predicted_class_name
-
-    def _eye_aspect_ratio(self, eye_points):
-        A = euclidean(eye_points[1], eye_points[5])
-        B = euclidean(eye_points[2], eye_points[4])
-        C = euclidean(eye_points[0], eye_points[3])
-        ear = (A + B) / (2.0 * C)
-        return ear
-
-    def perform_liveness_check(self, frame: np.ndarray, detected_faces_info: list, require_blink: bool = False) -> (bool, list):
-        """
-        使用 OULU_Protocol_2_model_0_0.onnx 模型结合眨眼检测进行活体判断。
-        返回 (is_overall_live, liveness_details_list)
-        liveness_details_list 包含每个脸的 {'box_coords', 'oulu_score', 'oulu_result', 'blink_status'}
-        """
-        overall_live_status = True
-        liveness_results_per_face = []
-
-        if not detected_faces_info:
-            self.logger.debug("No faces detected for liveness check. Passing.")
-            if self.blink_detection_active:
-                self.logger.debug("No faces, resetting blink detection state.")
-                self.blink_detection_active = False
-                self.frames_since_last_blink = 0
-            return True, []
-
-        if require_blink and not self.blink_detection_active:
-            self.blink_detection_active = True
-            self.frames_since_last_blink = 0
-            self.blink_counter = 0
-            self.logger.info("Blink detection activated.")
-
-        for face_info in detected_faces_info:
-            x1, y1, x2, y2 = face_info['box_coords']
-            cropped_face = frame[y1:y2, x1:x2]
-
-            face_width = x2 - x1
-            face_height = y2 - y1
-
-            oulu_score = 0.0
-            oulu_result_str = "N/A"
-            blink_status = "N/A"
-
-            if self.OULU_LIVENESS_SESSION is None or \
-               (cropped_face.shape[0] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE or cropped_face.shape[1] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE):
-                self.logger.warning(f"Face (ROI: {face_width}x{face_height}): Too small for reliable OULU Liveness. Score defaulted to 0.0.")
-                oulu_score = 0.0
-                oulu_result_str = "SPOOF (Size)"
-            else:
-                try:
-                    score, predicted_name = self._oulu_liveness_preprocess_and_infer(cropped_face)
-                    oulu_score = score
-                    oulu_result_str = predicted_name
-
-                    if score < OULU_LIVENESS_THRESHOLD:
-                        self.logger.warning(f"Face (ROI: {face_width}x{face_height}): OULU liveness detected SPOOF! Score: {oulu_score:.4f} (Predicted: {oulu_result_str})")
-                    else:
-                        self.logger.info(f"Face (ROI: {face_width}x{face_height}): OULU liveness detected LIVE. Score: {oulu_score:.4f} (Predicted: {oulu_result_str})")
-
-                except Exception as e:
-                    self.logger.error(f"Error during OULU Liveness inference for Face (ROI: {face_width}x{face_height}): {e}. Result defaulted to SPOOF.")
-                    oulu_result_str = "ERROR (OULU Liveness)"
-                    oulu_score = 0.0
-
-            if require_blink and self.DLIB_LANDMARK_PREDICTOR is not None:
-                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                dlib_rect = dlib.rectangle(x1, y1, x2, y2)
-                try:
-                    shape = self.DLIB_LANDMARK_PREDICTOR(gray_frame, dlib_rect)
-                    shape = face_utils.shape_to_np(shape)
-                    leftEye = shape[self.lStart:self.lEnd]
-                    rightEye = shape[self.rStart:self.rEnd]
-                    leftEAR = self._eye_aspect_ratio(leftEye)
-                    rightEAR = self._eye_aspect_ratio(rightEye)
-                    ear = (leftEAR + rightEAR) / 2.0
-                    self.logger.debug(f"Face EAR: {ear:.2f}, Blink counter: {self.blink_counter}, Total blinks: {self.total_blinks}")
-
-                    if ear < EYE_AR_THRESH:
-                        self.blink_counter += 1
-                        blink_status = f"EYES_CLOSED (EAR: {ear:.2f})"
-                    else:
-                        if self.blink_counter >= EYE_AR_CONSEC_FRAMES:
-                            self.total_blinks += 1
-                            self.logger.info(f"Blink detected! Total blinks: {self.total_blinks}")
-                            self.frames_since_last_blink = 0
-                            blink_status = "BLINK_DETECTED"
-                        else:
-                            blink_status = f"EYES_OPEN (EAR: {ear:.2f})"
-                        self.blink_counter = 0
-
-                    if self.blink_detection_active:
-                        self.frames_since_last_blink += 1
-                        if self.frames_since_last_blink >= BLINK_TIMEOUT_FRAMES:
-                            self.logger.warning(f"Blink timeout: No natural blink detected in {BLINK_TIMEOUT_FRAMES} frames.")
-                            blink_status = "BLINK_TIMEOUT"
-                except Exception as e:
-                    self.logger.error(f"Error during Dlib landmark/blink detection for face {x1,y1,x2,y2}: {e}")
-                    blink_status = "DLIB_ERROR"
-            else:
-                blink_status = "NOT_REQUIRED/DLIB_UNAVAILABLE"
-
-            # --- 综合判断逻辑 (保持不变，这是关键的活体判断逻辑) ---
-            final_live_status_for_face = True
-            oulu_is_live_by_threshold = (oulu_score >= OULU_LIVENESS_THRESHOLD)
-            blink_is_detected = ("BLINK_DETECTED" == blink_status)
-
-            if require_blink:
-                if not oulu_is_live_by_threshold:
-                    final_live_status_for_face = False
-                elif oulu_is_live_by_threshold:
-                    if blink_is_detected:
-                        final_live_status_for_face = True
-                    elif self.frames_since_last_blink < BLINK_TIMEOUT_FRAMES:
-                        final_live_status_for_face = True
-                    else: # OULU is LIVE, but blink timed out
-                        final_live_status_for_face = False
-            else: # If blink is not required, rely solely on OULU
-                final_live_status_for_face = oulu_is_live_by_threshold
-
-            if not final_live_status_for_face:
-                overall_live_status = False
-
-            liveness_results_per_face.append({
-                'box_coords': [int(c) for c in face_info['box_coords']],
-                'oulu_score': oulu_score,
-                'oulu_result': oulu_result_str,
-                'blink_status': blink_status,
-                'combined_live_status': final_live_status_for_face
-            })
-        return overall_live_status, liveness_results_per_face
