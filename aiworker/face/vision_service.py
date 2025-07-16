@@ -7,7 +7,8 @@ import onnxruntime
 import dlib
 from imutils import face_utils
 from aiworker.config import FACE_RECOGNITION_MODEL_FILENAME, DLIB_LANDMARK_PREDICTOR_FILENAME, OULU_LIVENESS_THRESHOLD, \
-    OULU_LIVENESS_INPUT_SIZE, MIN_EFFECTIVE_LIVENESS_ROI_SIZE, EYE_AR_CONSEC_FRAMES, BLINK_TIMEOUT_FRAMES, EYE_AR_THRESH
+    OULU_LIVENESS_INPUT_SIZE, MIN_EFFECTIVE_LIVENESS_ROI_SIZE, EYE_AR_CONSEC_FRAMES, BLINK_TIMEOUT_FRAMES, \
+    EYE_AR_THRESH, MODEL_DIR
 
 
 class VisionServiceWorker:
@@ -21,16 +22,13 @@ class VisionServiceWorker:
     def __init__(self):
         if not hasattr(self, '_initialized'):
             self._initialized = True
-            current_script_dir = os.path.abspath(os.path.dirname(__file__))
-            self.MODEL_DIR = os.path.join(current_script_dir, '..', 'dnn_models')
+            self.FACE_DETECTOR_PROTOTXT_PATH = os.path.join(MODEL_DIR, 'opencv_face_detector.pbtxt')
+            self.FACE_DETECTOR_WEIGHTS_PATH = os.path.join(MODEL_DIR, 'opencv_face_detector_uint8.pb')
 
-            self.FACE_DETECTOR_PROTOTXT_PATH = os.path.join(self.MODEL_DIR, 'opencv_face_detector.pbtxt')
-            self.FACE_DETECTOR_WEIGHTS_PATH = os.path.join(self.MODEL_DIR, 'opencv_face_detector_uint8.pb')
+            self.FACE_RECOGNITION_MODEL_PATH = os.path.join(MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
 
-            self.FACE_RECOGNITION_MODEL_PATH = os.path.join(self.MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
-
-            self.OULU_LIVENESS_MODEL_PATH = os.path.join(self.MODEL_DIR, 'OULU_Protocol_2_model_0_0.onnx')
-            self.DLIB_LANDMARK_PREDICTOR_PATH = os.path.join(self.MODEL_DIR, DLIB_LANDMARK_PREDICTOR_FILENAME)
+            self.OULU_LIVENESS_MODEL_PATH = os.path.join(MODEL_DIR, 'OULU_Protocol_2_model_0_0.onnx')
+            self.DLIB_LANDMARK_PREDICTOR_PATH = os.path.join(MODEL_DIR, DLIB_LANDMARK_PREDICTOR_FILENAME)
 
             self.FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.4
             self.FACE_RECOGNITION_THRESHOLD = 0.8
