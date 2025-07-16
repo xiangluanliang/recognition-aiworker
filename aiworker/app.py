@@ -157,48 +157,57 @@ def liveness_check_websocket(ws):
     try:
         while True:
             image_data_base64 = ws.receive(timeout=10)
-            if image_data_base64 is None:
-                app.logger.warning("WebSocket timed out waiting for frame.")
-                break
-
+            if image_data_base64 is None: break
             frame_counter += 1
 
             try:
                 img_bytes = base64.b64decode(image_data_base64.split(',', 1)[-1])
                 frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
                 if frame is None: continue
-            except:
+            except Exception:
                 continue
 
-            is_ai_frame = (frame_counter % frame_skip_rate == 0)
-
-            if is_ai_frame:
-                # 调用完整的API处理器进行严格分析
+            if (frame_counter % frame_skip_rate == 0):
                 response_json, _ = process_frame_for_api(
                     session_vision_worker, frame, known_faces_data
                 )
 
-                liveness_passed = response_json.get('liveness_passed', False)
-                persons_detected = len(response_json.get('persons', [])) > 0
+                is_final_result = False
+                final_status = 'processing'
 
-                # 判断是否得出最终结论
-                is_final_result = (persons_detected and liveness_passed is False) or \
-                                  (persons_detected and liveness_passed is True) or \
-                                  (frame_counter > BLINK_TIMEOUT_FRAMES)
+                if frame_counter > BLINK_TIMEOUT_FRAMES:
+                    is_final_result = True
+                    final_status = 'timeout'
+                    response_json['message'] = '活体检测超时'
+                    response_json['liveness_passed'] = False
+                else:
+                    persons = response_json.get('persons', [])
+                    if persons:  # 只有在检测到人脸时才进行后续判断
+                        first_person = persons[0]
+                        liveness_info = first_person.get('liveness_info', {})
+
+                        # 1. 快速失败：OULU分数过低
+                        if liveness_info.get('oulu_score', 1.0) < OULU_LIVENESS_HARD_THRESHOLD:
+                            is_final_result = True
+                            final_status = 'fraud_detected'
+                            response_json['message'] = '检测到欺诈攻击'
+                            response_json['liveness_passed'] = False
+
+                        # 2. 最终成功：眨眼完成
+                        elif liveness_info.get('blink_status') == 'BLINK_COMPLETED':
+                            is_final_result = True
+                            final_status = 'success'
+                            response_json['message'] = '活体检测通过'
+                            response_json['liveness_passed'] = True
 
                 if is_final_result:
-                    app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
-                    # 将最终的JSON结果发送回前端
+                    app.logger.info(f"Final result determined: {final_status}")
+                    response_json['status'] = 'final'
                     ws.send(json.dumps(response_json))
-                    break  # 结束会话
+                    break
                 else:
-                    # 如果不是最终结果，可以发送一个“中间状态”消息给前端，让用户知道仍在检测中
-                    # 这样可以避免前端在等待最终结果时感觉没有响应
-                    intermediate_status = {
-                        "status": "processing",
-                        "message": response_json.get("message", "Keep face in frame...")
-                    }
-                    ws.send(json.dumps(intermediate_status))
+                    response_json['status'] = 'processing'
+                    ws.send(json.dumps(response_json))
 
     except Exception as e:
         app.logger.error(f"Error in liveness WebSocket: {e}", exc_info=True)
