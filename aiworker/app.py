@@ -198,7 +198,7 @@ def liveness_check_websocket(ws):
                     )
                     if blink_completed:
                         is_final_result = True
-                        response_json['message'] = 'Liveness check passed.'
+                        response_json['message'] = '活体检测通过'
 
                 # --- 根据判断结果决定行为 ---
                 if is_final_result:
@@ -211,7 +211,7 @@ def liveness_check_websocket(ws):
                     app.logger.debug("Sending intermediate processing status to client.")
                     intermediate_status = {
                         "status": "processing",
-                        "message": response_json.get("message", "Please keep face steady..."),
+                        "message": response_json.get("message", "请正对摄像头..."),
                         "persons": response_json.get("persons", [])
                     }
                     ws.send(json.dumps(intermediate_status))

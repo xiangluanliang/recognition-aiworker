@@ -36,19 +36,25 @@ DLIB_LANDMARK_PREDICTOR_FILENAME = 'shape_predictor_68_face_landmarks.dat'
 # --- AI Model Tuning Parameters ---
 
 # Face Detector
-FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.4
+FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.5
 
 # Face Recognition
-FACE_RECOGNITION_THRESHOLD = 0.8  # 欧氏距离阈值，越小越相似
+FACE_RECOGNITION_THRESHOLD = 1.15  # 欧氏距离阈值，越小越相似
 
 # Liveness - OULU Model
 OULU_LIVENESS_INPUT_SIZE = (224, 224)
-OULU_LIVENESS_THRESHOLD = 0.015  # 分数高于此值为真人
+OULU_LIVENESS_THRESHOLD = 0.5  # 分数高于此值为真人
+OULU_LIVENESS_HARD_THRESHOLD = 0.2 # 分数低于此值立刻判定为欺诈
 MIN_EFFECTIVE_LIVENESS_ROI_SIZE = 100 # 人脸框小于此像素尺寸，则不进行OULU活体检测
 
 # Liveness - Blink Detection
-EYE_AR_THRESH = 0.25  # 眼睛纵横比阈值
-EYE_AR_CONSEC_FRAMES = 2  # 连续闭眼帧数
+EYE_AR_THRESH = 0.23  # 眼睛纵横比阈值
+# 连续闭眼帧数 一般需要至少为2，但我们的服务器很难得到一个连续帧
+# 为了优化用户体验，我们将改变眨眼检测的算法
+# 不再要求“连续闭眼”，而是检测一个更符合生理特征的“睁眼 -> 闭眼 -> 睁眼”的完整序列。
+# 哪怕“闭眼”状态只被我们捕捉到一帧，只要它发生在一个“睁眼”状态之后，
+# 我们就认为用户有眨眼的意图，并开始寻找下一个“睁眼”状态来确认整个动作。
+EYE_AR_CONSEC_FRAMES = 1
 BLINK_TIMEOUT_FRAMES = 150  # 眨眼检测超时帧数
 
 # --- UI and Guidance Parameters ---

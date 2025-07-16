@@ -10,7 +10,6 @@ from .liveness_detector import LivenessDetector
 from aiworker.config import (
     MODEL_DIR,
     OULU_LIVENESS_MODEL_FILENAME,
-    DLIB_LANDMARK_PREDICTOR_FILENAME,
     FACE_DETECTOR_PROTOTXT_FILENAME,
     FACE_DETECTOR_WEIGHTS_FILENAME,
     FACE_RECOGNITION_MODEL_FILENAME,
@@ -36,24 +35,19 @@ class VisionServiceWorker:
         self.logger.info("Initializing VisionServiceWorker...")
 
         oulu_model_path = os.path.join(MODEL_DIR, OULU_LIVENESS_MODEL_FILENAME)
-        dlib_predictor_path = os.path.join(MODEL_DIR, DLIB_LANDMARK_PREDICTOR_FILENAME)
         face_detector_prototxt = os.path.join(MODEL_DIR, FACE_DETECTOR_PROTOTXT_FILENAME)
         face_detector_weights = os.path.join(MODEL_DIR, FACE_DETECTOR_WEIGHTS_FILENAME)
         face_rec_model_path = os.path.join(MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
 
         try:
-            self.liveness_detector = LivenessDetector(oulu_model_path, dlib_predictor_path)
-
-            # 加载人脸检测器 (OpenCV DNN)
+            self.liveness_detector = LivenessDetector(oulu_model_path)
             self.face_detector_net = cv2.dnn.readNet(face_detector_prototxt, face_detector_weights)
-
-            # 加载人脸识别模型 (ONNX)
             self.face_recognition_net = onnxruntime.InferenceSession(face_rec_model_path,
                                                                      providers=['CPUExecutionProvider'])
             self.face_rec_input_name = self.face_recognition_net.get_inputs()[0].name
             self.face_rec_output_name = self.face_recognition_net.get_outputs()[0].name
 
-            self.logger.info("All vision models loaded successfully.")
+            self.logger.info("All vision models (using Mediapipe) loaded successfully.")
 
         except Exception as e:
             self.logger.critical(f"CRITICAL: Failed to load vision models: {e}")
