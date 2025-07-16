@@ -176,23 +176,42 @@ def liveness_check_websocket(ws):
                     session_vision_worker, frame, known_faces_data
                 )
 
-                liveness_passed = response_json.get('liveness_passed', False)
-                persons_detected = len(response_json.get('persons', [])) > 0
+                is_final_result = False
 
-                is_final_result = (persons_detected and liveness_passed is False) or \
-                                  (persons_detected and liveness_passed is True) or \
-                                  (frame_counter > BLINK_TIMEOUT_FRAMES)
+                # 1. 检查是否超时
+                if frame_counter > BLINK_TIMEOUT_FRAMES:
+                    is_final_result = True
+                    response_json['message'] = 'Liveness check timed out.'
+                    response_json['liveness_passed'] = False
 
+                # 2. 检查是否明确失败 (例如，检测到欺诈)
+                elif response_json.get('liveness_passed') is False:
+                    is_final_result = True
+                    # message 会由 face_handler 提供
+
+                # 3. 检查是否明确成功 (必须检测到眨眼)
+                elif response_json.get('liveness_passed') is True:
+                    # 检查返回的详细结果中，是否真的有人完成了眨眼
+                    persons = response_json.get('persons', [])
+                    blink_completed = any(
+                        p.get('liveness_info', {}).get('blink_status') == 'BLINK_DETECTED' for p in persons
+                    )
+                    if blink_completed:
+                        is_final_result = True
+                        response_json['message'] = 'Liveness check passed.'
+
+                # --- 根据判断结果决定行为 ---
                 if is_final_result:
-                    app.logger.info("Final result determined. Sending final message and closing connection.")
+                    app.logger.info(f"Final result determined: {response_json.get('message')}")
                     response_json['status'] = 'final'
                     ws.send(json.dumps(response_json))
-                    break
+                    break  # 结束会话
                 else:
-                    app.logger.debug("Sending intermediate processing status.")
+                    # 发送中间状态，保持连接
+                    app.logger.debug("Sending intermediate processing status to client.")
                     intermediate_status = {
                         "status": "processing",
-                        "message": response_json.get("message", "Please keep your face steady..."),
+                        "message": response_json.get("message", "Please keep face steady..."),
                         "persons": response_json.get("persons", [])
                     }
                     ws.send(json.dumps(intermediate_status))
