@@ -32,7 +32,7 @@ def fetch_warning_zones(camera_id: int) -> dict:
     default_zones = {'zones': [], 'safe_time': 5, 'safe_distance': 50.0}
     try:
         # 注意：URL应该从config.py中获取
-        url = f"{DJANGO_API_BASE_URL}warning-zones/by-camera/{camera_id}/"
+        url = f"{DJANGO_API_BASE_URL}warning_zones/by-camera/{camera_id}/"
         headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
         response = requests.get(url, headers=headers, verify=False, timeout=5)
         response.raise_for_status()

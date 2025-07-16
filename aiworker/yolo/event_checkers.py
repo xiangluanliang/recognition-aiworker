@@ -125,21 +125,3 @@ def _estimate_orientation(kpts):
     direction = kpts[0] - shoulder_mid
     return direction / (np.linalg.norm(direction) + 1e-5)
 
-
-def detect_fight(ids, centers, fight_kpts_history, dist_thresh, motion_thresh, orient_thresh):
-    conflicts = []
-    for i in range(len(ids)):
-        for j in range(i + 1, len(ids)):
-            pid1, pid2 = ids[i], ids[j]
-            dist = np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
-
-            if dist < dist_thresh:
-                if len(fight_kpts_history[pid1]) == 5 and len(fight_kpts_history[pid2]) == 5:
-                    motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
-                    motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
-                    if motion1 > motion_thresh and motion2 > motion_thresh:
-                        vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
-                        vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
-                        if np.dot(vec1, vec2) < -orient_thresh:  # 向量点积为负表示方向相反（面对面）
-                            conflicts.append((pid1, pid2))
-    return conflicts
