@@ -42,7 +42,6 @@ class VisionServiceWorker:
         face_rec_model_path = os.path.join(MODEL_DIR, FACE_RECOGNITION_MODEL_FILENAME)
 
         try:
-            # ✅ **核心修正：在此处创建并持有 LivenessDetector 实例**
             self.liveness_detector = LivenessDetector(oulu_model_path, dlib_predictor_path)
 
             # 加载人脸检测器 (OpenCV DNN)
@@ -63,37 +62,31 @@ class VisionServiceWorker:
         self._initialized = True
 
     def detect_faces(self, frame: np.ndarray) -> list:
-        if self.FACE_DETECTOR_NET is None:
+        """使用加载的人脸检测模型在帧上检测人脸。"""
+        if self.face_detector_net is None:
             self.logger.warning("Face detector model not loaded. Cannot detect faces.")
             return []
-        if frame is None or frame.size == 0 or frame.shape[0] == 0 or frame.shape[1] == 0:
-            self.logger.warning("Received empty or invalid frame for face detection.")
-            return []
+
         (h, w) = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0),
-                                     swapRB=False, crop=False)
-        self.FACE_DETECTOR_NET.setInput(blob)
-        detections = self.FACE_DETECTOR_NET.forward()
+        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+
+        self.face_detector_net.setInput(blob)
+        detections = self.face_detector_net.forward()
+
         detected_faces = []
         for i in range(detections.shape[2]):
             confidence = detections[0, 0, i, 2]
-            if confidence > self.FACE_DETECTOR_CONFIDENCE_THRESHOLD:
+            if confidence > FACE_DETECTOR_CONFIDENCE_THRESHOLD:
                 box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
                 startX, startY, endX, endY = box.astype("int")
                 startX, startY = max(0, startX), max(0, startY)
-                endX, endY = min(w, endX), min(h, endY)
-                if (endX - startX) > 0 and (endY - startY) > 0:
+                endX, endY = min(w - 1, endX), min(h - 1, endY)
+                if (endX > startX) and (endY > startY):
                     detected_faces.append({'box_coords': [startX, startY, endX, endY], 'confidence': float(confidence)})
-        self.logger.debug(
-            f"Detected {len(detected_faces)} faces with confidence > {self.FACE_DETECTOR_CONFIDENCE_THRESHOLD}")
         return detected_faces
 
     def _extract_face_features(self, face_image: np.ndarray) -> np.ndarray:
-        if self.FACE_RECOGNITION_NET is None:
-            self.logger.warning("Face recognition model not loaded. Cannot extract features.")
-            return np.array([])
-        if face_image is None or face_image.size == 0 or face_image.shape[0] == 0 or face_image.shape[1] == 0:
-            self.logger.warning("Received empty or invalid face_image for feature extraction.")
+        if face_image is None or face_image.size == 0:
             return np.array([])
         processed_image = cv2.resize(face_image, (160, 160))
         processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB)
@@ -101,9 +94,8 @@ class VisionServiceWorker:
         processed_image = (processed_image - 0.5) * 2.0
         input_tensor = np.transpose(processed_image, (2, 0, 1))
         input_tensor = np.expand_dims(input_tensor, axis=0)
-        features = self.FACE_RECOGNITION_NET.run([self.face_rec_output_name], {self.face_rec_input_name: input_tensor})[
+        features = self.face_recognition_net.run([self.face_rec_output_name], {self.face_rec_input_name: input_tensor})[
             0]
-        self.logger.debug(f"Extracted face features of shape: {features.shape}")
         return features.flatten()
 
     def recognize_faces(self, frame: np.ndarray, detected_faces: list, known_faces_data: list) -> list:
