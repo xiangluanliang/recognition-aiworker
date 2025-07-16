@@ -19,12 +19,9 @@ from aiworker.face.face_handler import process_frame_for_api
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
 from aiworker.yolo.yolo_detector import YoloDetector
 
+
 # 导入音频模块
 from aiworker.audio.event_handlers import handle_audio_file
-from aiworker.audio.preprocess import load_audio
-import subprocess
-import tempfile
-import os
 # from aiworker.report.report_generator import process_report_generation
 
 # --- Flask App 初始化 ---
