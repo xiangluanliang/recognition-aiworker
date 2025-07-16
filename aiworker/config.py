@@ -7,7 +7,7 @@ DJANGO_API_TOKEN = os.environ.get('DJANGO_API_TOKEN', '3d814802906b91d7947518f5d
 DJANGO_API_BASE_URL = os.environ.get('DJANGO_API_URL', 'https://8.152.101.217/api/test/api/')
 RTMP_SERVER_URL = os.environ.get('RTMP_SERVER_URL', 'rtmp://localhost:9090/live')
 CACHE_REFRESH_INTERVAL = 300  # 5 minutes
-MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/media') # 媒体文件保存根目录
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/srv/http/recognition_media') # 媒体文件保存根目录
 
 # --- Stream Processing Parameters ---
 FRAME_WIDTH = 854
