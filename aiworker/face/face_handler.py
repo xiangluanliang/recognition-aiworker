@@ -70,14 +70,22 @@ def process_frame_for_stream(vision_worker: VisionServiceWorker, frame: np.ndarr
 
 def process_frame_for_api(vision_worker: VisionServiceWorker, frame: np.ndarray, known_faces_data: list):
     """
-    为单帧API请求进行处理，强制进行严格的活体检测，并返回完整JSON。
+    为单帧API请求进行处理，进行严格的活体检测，并返回完整JSON。
     """
     detected_faces = vision_worker.detect_faces(frame)
     if not detected_faces:
-        return {'status': 'error', 'message': 'No face detected'}, None
+        response_json = {
+            'status': 'error',
+            'message': 'No face detected',
+            'liveness_passed': False,
+            'persons': [],
+            'processed_image': None
+        }
+        return response_json, frame  # 第二个返回值是原始帧，用于可能的内部调试
 
+    # 对于单帧API，我们强制要求眨眼以达到最高的防伪级别
     liveness_status, liveness_details = vision_worker.liveness_detector.perform_liveness_check(
-        frame, detected_faces, require_blink=True  # 强制眨眼
+        frame, detected_faces, require_blink=True
     )
 
     recognized_identities = vision_worker.recognize_faces(frame, detected_faces, known_faces_data)
