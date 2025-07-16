@@ -201,7 +201,14 @@ def _draw_guidance_and_results(frame, detected_faces, persons_data, vision_worke
         cv2.putText(frame, f"Total Blinks: {total_blinks}",
                     (w - 200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-    # 绘制每个识别出的人脸信息
+    if persons_data:
+        first_person_liveness = persons_data[0].get('liveness_info', {})
+        blink_status = first_person_liveness.get('blink_status', '')
+
+        if "BLINK_COMPLETED" not in blink_status and "BLINK_TIMEOUT" not in blink_status:
+            cv2.putText(frame, "Please Blink Naturally",
+                        (w - 300, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
     for person in persons_data:
         x1, y1, x2, y2 = person['box_coords']
         identity = person.get('identity', 'Unknown')
