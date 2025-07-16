@@ -196,7 +196,8 @@ def liveness_check_websocket(ws):
                     # 这样可以避免前端在等待最终结果时感觉没有响应
                     intermediate_status = {
                         "status": "processing",
-                        "message": response_json.get("message", "Keep face in frame...")
+                        "message": response_json.get("message", "请正对摄像头，保持稳定..."),
+                        "persons": response_json.get("persons", [])
                     }
                     ws.send(json.dumps(intermediate_status))
 
