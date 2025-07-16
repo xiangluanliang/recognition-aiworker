@@ -155,25 +155,24 @@ def liveness_check_websocket(ws):
     frame_skip_rate = 3
 
     try:
-        while True:
-            image_data_base64 = ws.receive(timeout=10)
-            if image_data_base64 is None:
-                app.logger.warning("WebSocket timed out waiting for frame.")
-                break
-
+        for image_data_base64 in ws:
             frame_counter += 1
+            app.logger.info(f"Received frame #{frame_counter}")
 
             try:
                 img_bytes = base64.b64decode(image_data_base64.split(',', 1)[-1])
                 frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-                if frame is None: continue
-            except:
+                if frame is None:
+                    app.logger.warning(f"Frame #{frame_counter} is invalid, skipping.")
+                    continue
+            except Exception as e:
+                app.logger.warning(f"Failed to decode frame #{frame_counter}: {e}")
                 continue
 
             is_ai_frame = (frame_counter % frame_skip_rate == 0)
 
             if is_ai_frame:
-                # 调用完整的API处理器进行严格分析
+                app.logger.info(f"Frame #{frame_counter}: Performing AI analysis...")
                 response_json, _ = process_frame_for_api(
                     session_vision_worker, frame, known_faces_data
                 )
@@ -181,17 +180,17 @@ def liveness_check_websocket(ws):
                 liveness_passed = response_json.get('liveness_passed', False)
                 persons_detected = len(response_json.get('persons', [])) > 0
 
-                # 判断是否得出最终结论
                 is_final_result = (persons_detected and liveness_passed is False) or \
                                   (persons_detected and liveness_passed is True) or \
                                   (frame_counter > BLINK_TIMEOUT_FRAMES)
 
                 if is_final_result:
-                    app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
+                    app.logger.info("Final result determined. Sending final message and closing connection.")
                     response_json['status'] = 'final'
                     ws.send(json.dumps(response_json))
                     break
                 else:
+                    app.logger.info("Sending intermediate processing status to client.")
                     intermediate_status = {
                         "status": "processing",
                         "message": response_json.get("message", "请正对摄像头，保持稳定..."),
