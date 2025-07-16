@@ -155,24 +155,23 @@ def liveness_check_websocket(ws):
     frame_skip_rate = 3
 
     try:
-        for image_data_base64 in ws:
+        while True:
+            image_data_base64 = ws.receive(timeout=10)
+            if image_data_base64 is None:
+                app.logger.warning("WebSocket timed out waiting for a frame. Closing session.")
+                break
+
             frame_counter += 1
-            app.logger.info(f"Received frame #{frame_counter}")
+            app.logger.debug(f"Received frame #{frame_counter}")
 
             try:
                 img_bytes = base64.b64decode(image_data_base64.split(',', 1)[-1])
                 frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-                if frame is None:
-                    app.logger.warning(f"Frame #{frame_counter} is invalid, skipping.")
-                    continue
-            except Exception as e:
-                app.logger.warning(f"Failed to decode frame #{frame_counter}: {e}")
+                if frame is None: continue
+            except Exception:
                 continue
 
-            is_ai_frame = (frame_counter % frame_skip_rate == 0)
-
-            if is_ai_frame:
-                app.logger.info(f"Frame #{frame_counter}: Performing AI analysis...")
+            if (frame_counter % frame_skip_rate == 0):
                 response_json, _ = process_frame_for_api(
                     session_vision_worker, frame, known_faces_data
                 )
@@ -190,13 +189,14 @@ def liveness_check_websocket(ws):
                     ws.send(json.dumps(response_json))
                     break
                 else:
-                    app.logger.info("Sending intermediate processing status to client.")
+                    app.logger.debug("Sending intermediate processing status.")
                     intermediate_status = {
                         "status": "processing",
-                        "message": response_json.get("message", "请正对摄像头，保持稳定..."),
+                        "message": response_json.get("message", "Please keep your face steady..."),
                         "persons": response_json.get("persons", [])
                     }
                     ws.send(json.dumps(intermediate_status))
+
 
     except Exception as e:
         app.logger.error(f"Error in liveness WebSocket: {e}", exc_info=True)
