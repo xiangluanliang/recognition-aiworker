@@ -17,7 +17,7 @@ JPEG_QUALITY = 70
 
 # --- Model Paths and Filenames ---
 # 基础模型目录
-MODEL_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'dnn_models')
+MODEL_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)),'..', 'dnn_models')
 
 # Face Detector (OpenCV DNN)
 FACE_DETECTOR_PROTOTXT_FILENAME = 'opencv_face_detector.pbtxt'

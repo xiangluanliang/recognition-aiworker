@@ -1,8 +1,6 @@
-# aiworker/face/liveness_detector.py
 import cv2
 import numpy as np
-import dlib
-from imutils import face_utils
+import mediapipe as mp
 from scipy.spatial.distance import euclidean
 import onnxruntime
 import logging
@@ -14,7 +12,7 @@ from aiworker.config import (
 
 
 class LivenessDetector:
-    def __init__(self, oulu_model_path: str, dlib_predictor_path: str):
+    def __init__(self, oulu_model_path: str, dlib_predictor_path: str = None):
         self.logger = logging.getLogger(__name__)
         try:
             self.session = onnxruntime.InferenceSession(oulu_model_path, providers=['CPUExecutionProvider'])
@@ -26,13 +24,16 @@ class LivenessDetector:
             self.session = None
 
         try:
-            self.landmark_predictor = dlib.shape_predictor(dlib_predictor_path)
-            (self.lStart, self.lEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
-            (self.rStart, self.rEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
-            self.logger.info("Dlib landmark predictor loaded successfully.")
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1)
+            self.logger.info("MediaPipe FaceMesh initialized successfully.")
         except Exception as e:
-            self.logger.critical(f"Failed to load Dlib landmark predictor: {e}")
-            self.landmark_predictor = None
+            self.logger.critical(f"Failed to initialize MediaPipe FaceMesh: {e}")
+            self.face_mesh = None
+
+        # 眼睛关键点索引
+        self.left_eye_idx = [33, 160, 158, 133, 153, 144]
+        self.right_eye_idx = [362, 385, 387, 263, 373, 380]
 
         # Blink detection state variables
         self.blink_counter = 0
@@ -46,15 +47,25 @@ class LivenessDetector:
         C = euclidean(eye_points[0], eye_points[3])
         return (A + B) / (2.0 * C)
 
-    def _check_blinks(self, frame_gray, face_rect):
-        if not self.landmark_predictor:
-            return "DLIB_UNAVAILABLE"
+    def _check_blinks(self, frame_bgr):
+        if not self.face_mesh:
+            return "MEDIAPIPE_UNAVAILABLE"
 
         try:
-            shape = self.landmark_predictor(frame_gray, face_rect)
-            shape = face_utils.shape_to_np(shape)
-            leftEye = shape[self.lStart:self.lEnd]
-            rightEye = shape[self.rStart:self.rEnd]
+            rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            results = self.face_mesh.process(rgb_frame)
+            if not results.multi_face_landmarks:
+                return "NO_FACE"
+
+            face_landmarks = results.multi_face_landmarks[0].landmark
+            ih, iw = frame_bgr.shape[:2]
+
+            def get_eye_coords(indices):
+                return [(int(face_landmarks[i].x * iw), int(face_landmarks[i].y * ih)) for i in indices]
+
+            leftEye = get_eye_coords(self.left_eye_idx)
+            rightEye = get_eye_coords(self.right_eye_idx)
+
             leftEAR = self._eye_aspect_ratio(leftEye)
             rightEAR = self._eye_aspect_ratio(rightEye)
             ear = (leftEAR + rightEAR) / 2.0
@@ -70,15 +81,14 @@ class LivenessDetector:
                 self.blink_counter = 0
                 return f"EYES_OPEN (EAR: {ear:.2f})"
         except Exception as e:
-            self.logger.error(f"Error during blink detection: {e}")
-            return "DLIB_ERROR"
+            self.logger.error(f"Error during blink detection (mediapipe): {e}")
+            return "MEDIAPIPE_ERROR"
 
     def _check_oulu_liveness(self, cropped_face):
         if not self.session:
             return 0.0, "OULU_MODEL_UNAVAILABLE"
 
-        if cropped_face.shape[0] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE or cropped_face.shape[
-            1] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE:
+        if cropped_face.shape[0] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE or cropped_face.shape[1] < MIN_EFFECTIVE_LIVENESS_ROI_SIZE:
             return 0.0, "SPOOF (Size)"
 
         try:
@@ -99,7 +109,6 @@ class LivenessDetector:
     def perform_liveness_check(self, frame, detected_faces_info, require_blink=False):
         overall_live_status = True
         liveness_results = []
-        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if require_blink and not self.blink_detection_active:
             self.blink_detection_active = True
@@ -115,14 +124,12 @@ class LivenessDetector:
 
             blink_status = "NOT_REQUIRED"
             if require_blink:
-                dlib_rect = dlib.rectangle(x1, y1, x2, y2)
-                blink_status = self._check_blinks(gray_frame, dlib_rect)
+                blink_status = self._check_blinks(frame)
                 if self.blink_detection_active:
                     self.frames_since_last_blink += 1
                     if self.frames_since_last_blink >= BLINK_TIMEOUT_FRAMES and self.total_blinks == 0:
                         blink_status = "BLINK_TIMEOUT"
 
-            # Combine results
             is_live = oulu_result == "LIVE"
             if require_blink:
                 is_live = is_live and (

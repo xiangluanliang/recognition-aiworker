@@ -10,7 +10,7 @@ def fetch_known_faces():
     try:
         url = f"{DJANGO_API_BASE_URL}known-faces/"
         headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
-        response = requests.get(url, timeout=10, headers=headers)
+        response = requests.get(url, timeout=10, headers=headers, verify=False)
         response.raise_for_status()
         logger.info(f"Successfully fetched {len(response.json())} known faces.")
         return response.json()
@@ -23,7 +23,7 @@ def log_event(event_data: dict):
     try:
         url = f"{DJANGO_API_BASE_URL}log-event/"
         headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
-        requests.post(url, json=event_data, timeout=5, headers=headers)
+        requests.post(url, json=event_data, timeout=5, headers=headers, verify=False)
     except Exception as e:
         logger.error(f"Failed to log event to Django: {e}")
 
