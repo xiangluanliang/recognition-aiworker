@@ -58,7 +58,6 @@ RECOMMENDED_FACE_MIN_PIXELS = 150  # 推荐人脸的最小像素尺寸
 # --- Abnormal Behavior Detection Parameters ---
 # Models
 YOLO_POSE_MODEL_FILENAME = "yolov8l-pose.pt"
-YOLO_FIGHT_MODEL_FILENAME = "Yolo_nano_weights.pt"
 
 # Tracking
 PERSON_MATCHING_THRESHOLD = 60 # 追踪时匹配ID的像素距离阈值

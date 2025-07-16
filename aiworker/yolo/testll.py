@@ -4,7 +4,7 @@ import time
 
 from aiworker.yolo.yolo_detector import YoloDetector
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
-from aiworker.config import YOLO_POSE_MODEL_FILENAME, YOLO_FIGHT_MODEL_FILENAME, MODEL_DIR
+from aiworker.config import YOLO_POSE_MODEL_FILENAME, MODEL_DIR
 
 
 def main():
@@ -21,12 +21,12 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS) or 25  # 默认值 25
     fps = int(fps)
 
-    # 初始化两个 YOLO 模型
+    # 初始化 YOLO 模型
     pose_detector = YoloDetector(weights_filename=YOLO_POSE_MODEL_FILENAME)
-    fight_detector = YoloDetector(weights_filename=YOLO_FIGHT_MODEL_FILENAME)
+
 
     # 初始化行为处理器
-    processor = AbnormalBehaviorProcessor(camera_id, pose_detector, fight_detector, fps)
+    processor = AbnormalBehaviorProcessor(camera_id, pose_detector, fps)
 
     frame_skip = 6  # 跳过4帧，处理第5帧
     frame_idx = 0
