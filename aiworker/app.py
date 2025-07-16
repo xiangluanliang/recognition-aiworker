@@ -188,12 +188,10 @@ def liveness_check_websocket(ws):
 
                 if is_final_result:
                     app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
-                    # 将最终的JSON结果发送回前端
+                    response_json['status'] = 'final'
                     ws.send(json.dumps(response_json))
-                    break  # 结束会话
+                    break
                 else:
-                    # 如果不是最终结果，可以发送一个“中间状态”消息给前端，让用户知道仍在检测中
-                    # 这样可以避免前端在等待最终结果时感觉没有响应
                     intermediate_status = {
                         "status": "processing",
                         "message": response_json.get("message", "请正对摄像头，保持稳定..."),
