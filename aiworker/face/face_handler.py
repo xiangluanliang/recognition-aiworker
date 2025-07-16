@@ -84,8 +84,11 @@ def process_frame_for_api(vision_worker: VisionServiceWorker, frame: np.ndarray,
         return response_json, frame  # 第二个返回值是原始帧，用于可能的内部调试
 
     # 对于单帧API，我们强制要求眨眼以达到最高的防伪级别
-    liveness_status, liveness_details = vision_worker.liveness_detector.perform_liveness_check(
+    liveness_details = vision_worker.liveness_detector.perform_liveness_check(
         frame, detected_faces, require_blink=True
+    )
+    liveness_status = bool(liveness_details) and all(
+        item.get('combined_live_status', False) for item in liveness_details
     )
 
     recognized_identities = vision_worker.recognize_faces(frame, detected_faces, known_faces_data)
