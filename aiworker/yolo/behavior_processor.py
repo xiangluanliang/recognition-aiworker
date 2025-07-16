@@ -93,7 +93,7 @@ class AbnormalBehaviorProcessor:
             pid = ids[i]
 
             # 检测摔倒
-            is_fall, is_new_fall = check_fall(
+            is_fall, is_new_fall,score = check_fall(
                 pid, kpts, self.person_history, self.person_fall_status,
                 FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
             )
@@ -111,7 +111,7 @@ class AbnormalBehaviorProcessor:
             # 如果是新发生的事件，则记录并上报
             if is_new_fall:
                 all_event_pids.add(pid)
-                self._log_event('person_fall', pid, confidences[i], frame)
+                self._log_event('person_fall', pid, score, frame)
 
             for zone_index in new_intrusion_zones:
                 all_event_pids.add(pid)
