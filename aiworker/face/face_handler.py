@@ -190,16 +190,6 @@ def _draw_guidance_and_results(frame, detected_faces, persons_data, vision_worke
     # 绘制顶部状态信息
     cv2.putText(frame, status_message, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2, cv2.LINE_AA)
 
-    # 绘制眨眼提示 (如果需要)
-    # 注意: vision_worker.liveness_detector 才是真正持有眨眼状态的对象
-    if vision_worker.liveness_detector.blink_detection_active:
-        total_blinks = vision_worker.liveness_detector.total_blinks
-        if total_blinks == 0:
-            blink_frames = vision_worker.liveness_detector.frames_since_last_blink
-            cv2.putText(frame, f"Please Blink! ({blink_frames}/{BLINK_TIMEOUT_FRAMES})",
-                        (w - 300, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame, f"Total Blinks: {total_blinks}",
-                    (w - 200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
     if persons_data:
         first_person_liveness = persons_data[0].get('liveness_info', {})
