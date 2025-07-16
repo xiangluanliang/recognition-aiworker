@@ -74,45 +74,50 @@ def process_frame_for_api(vision_worker: VisionServiceWorker, frame: np.ndarray,
     """
     detected_faces = vision_worker.detect_faces(frame)
     if not detected_faces:
-        response_json = {
+        return {
             'status': 'error',
             'message': 'No face detected',
             'liveness_passed': False,
             'persons': [],
-            'processed_image': None
-        }
-        return response_json, frame  # 第二个返回值是原始帧，用于可能的内部调试
+        }, frame
 
     # 对于单帧API，我们强制要求眨眼以达到最高的防伪级别
     liveness_details = vision_worker.liveness_detector.perform_liveness_check(
         frame, detected_faces, require_blink=True
     )
-    liveness_status = bool(liveness_details) and all(
-        item.get('combined_live_status', False) for item in liveness_details
-    )
-
     recognized_identities = vision_worker.recognize_faces(frame, detected_faces, known_faces_data)
 
     persons_data = []
-    for person in recognized_identities:
-        matched_liveness = next((ld for ld in liveness_details if ld['box_coords'] == person['box_coords']), None)
-        if matched_liveness:
-            person['liveness_info'] = matched_liveness
-        persons_data.append(person)
+    for i, face_info in enumerate(detected_faces):
+        matched_identity = next((p for p in recognized_identities if p['box_coords'] == face_info['box_coords']), {})
+        matched_liveness = liveness_details[i]
 
-    processed_image = frame.copy()
-    _draw_guidance_and_results(processed_image, detected_faces, persons_data, vision_worker)
+        person_data = {
+            **face_info,
+            **matched_identity,
+            'liveness_info': matched_liveness
+        }
+        persons_data.append(person_data)
 
-    _, buffer = cv2.imencode('.jpg', processed_image)
-    img_base64 = base64.b64encode(buffer).decode('utf-8')
+    liveness_status = bool(persons_data) and all(
+        p.get('liveness_info', {}).get('combined_live_status', False) for p in persons_data
+    )
+    processed_image_b64 = None
+    if liveness_status:
+        processed_image = frame.copy()
+        # 注意: _draw_guidance_and_results 现在只应在成功时调用以绘制最终结果
+        _draw_guidance_and_results(processed_image, detected_faces, persons_data, vision_worker)
+        _, buffer = cv2.imencode('.jpg', processed_image)
+        processed_image_b64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
 
     response_json = {
-        'status': 'success',
+        'status': 'success',  # 只要流程没出错，status就是success
         'persons': persons_data,
         'liveness_passed': liveness_status,
-        'processed_image': f"data:image/jpeg;base64,{img_base64}"
+        'processed_image': processed_image_b64  # 成功时有值，否则为None
     }
-    return response_json, processed_image
+
+    return response_json, frame
 
 
 def _draw_guidance_and_results(frame, detected_faces, persons_data, vision_worker):
