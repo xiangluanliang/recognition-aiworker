@@ -139,17 +139,20 @@ def recognize_frame_api():
 
     return jsonify(response_json)
 
+
 @sock.route('/ws/liveness_check')
 def liveness_check_websocket(ws):
     """
     处理活体检测的WebSocket连接。
-    每个连接都是一个独立的、有状态的检测会话。
+    加入了跳帧逻辑以优化性能。
     """
     app.logger.info("WebSocket client connected for liveness check.")
 
     session_vision_worker = VisionServiceWorker()
     known_faces_data = fetch_known_faces()
+
     frame_counter = 0
+    frame_skip_rate = 3
 
     try:
         while True:
@@ -167,26 +170,35 @@ def liveness_check_websocket(ws):
             except:
                 continue
 
-            # 复用API处理器，因为它有最严格的活体检测逻辑
-            response_json, _ = process_frame_for_api(
-                session_vision_worker, frame, known_faces_data
-            )
+            is_ai_frame = (frame_counter % frame_skip_rate == 0)
 
-            liveness_passed = response_json.get('liveness_passed', False)
-            persons_detected = len(response_json.get('persons', [])) > 0
+            if is_ai_frame:
+                # 调用完整的API处理器进行严格分析
+                response_json, _ = process_frame_for_api(
+                    session_vision_worker, frame, known_faces_data
+                )
 
-            # 获得最终结果的条件：
-            # A. 明确检测到欺诈 (liveness_passed is False and 有人脸)
-            # B. 明确检测到真人 (liveness_passed is True and 有人脸)
-            # C. 检测超时
-            is_final_result = (persons_detected and liveness_passed is False) or \
-                              (persons_detected and liveness_passed is True) or \
-                              (frame_counter > BLINK_TIMEOUT_FRAMES)
+                liveness_passed = response_json.get('liveness_passed', False)
+                persons_detected = len(response_json.get('persons', [])) > 0
 
-            if is_final_result:
-                app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
-                ws.send(json.dumps(response_json))
-                break
+                # 判断是否得出最终结论
+                is_final_result = (persons_detected and liveness_passed is False) or \
+                                  (persons_detected and liveness_passed is True) or \
+                                  (frame_counter > BLINK_TIMEOUT_FRAMES)
+
+                if is_final_result:
+                    app.logger.info(f"Final liveness result determined: {response_json.get('status')}")
+                    # 将最终的JSON结果发送回前端
+                    ws.send(json.dumps(response_json))
+                    break  # 结束会话
+                else:
+                    # 如果不是最终结果，可以发送一个“中间状态”消息给前端，让用户知道仍在检测中
+                    # 这样可以避免前端在等待最终结果时感觉没有响应
+                    intermediate_status = {
+                        "status": "processing",
+                        "message": response_json.get("message", "Keep face in frame...")
+                    }
+                    ws.send(json.dumps(intermediate_status))
 
     except Exception as e:
         app.logger.error(f"Error in liveness WebSocket: {e}", exc_info=True)
