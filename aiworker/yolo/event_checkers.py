@@ -11,16 +11,40 @@ def _angle_between_points(a, b, c):
     cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
 
+# 肩高比判断是否水平
+def is_likely_horizontal(bbox, threshold=1.2):
+    x1, y1, x2, y2 = bbox
+    width = x2 - x1
+    height = y2 - y1
+    if height == 0:
+        return False
+    return (width / height) > threshold
 
-def check_fall(pid, kpts, person_history, person_fall_status, angle_thresh, window_size, cooldown_frames):
+def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_size, cooldown_frames):
     mid_shoulder = (kpts[5] + kpts[6]) / 2
     mid_hip = (kpts[11] + kpts[12]) / 2
     angle = _angle_between_points(kpts[0], mid_shoulder, mid_hip)
 
+    # 判断 bbox 是否接近水平
+    is_horizontal = is_likely_horizontal(bbox)
+    angle_thresh = base_angle_thresh + 15 if is_horizontal else base_angle_thresh
+
+    # 计算评分（角度 & bbox宽高比）
+    angle_score = np.clip((base_angle_thresh - angle) / base_angle_thresh * 40, 0, 40)
+    if angle < 10:  # 极端角度，给满分
+        angle_score = 40
+    wh_ratio = (bbox[2] - bbox[0]) / (bbox[3] - bbox[1] + 1e-5)
+    wh_score = np.clip((wh_ratio - 1.2) / 1.8 * 30, 0, 30)
+
     status = person_fall_status[pid]
+
+    motion_score = np.clip(status['fall_frame_count'] / window_size * 30, 0, 30)
+
+    total_score = ( angle_score + wh_score + motion_score )/100 # 总分：角度+形状+持续性，总分最高100
+
     if status['cooldown_counter'] > 0:
         status['cooldown_counter'] -= 1
-        return True, False  # 冷却中，仍认为是摔倒状态，但不是新事件
+        return True, False ,total_score # 冷却中，仍认为是摔倒状态，但不是新事件
 
     is_fall = angle < angle_thresh
     if is_fall:
@@ -29,12 +53,12 @@ def check_fall(pid, kpts, person_history, person_fall_status, angle_thresh, wind
             if not status['is_falling']:
                 status['is_falling'] = True
                 status['cooldown_counter'] = cooldown_frames
-                return True, True  # 是摔倒 + 是新事件
-            return True, False  # 是摔倒，但已记录
+                return True, True ,total_score # 是摔倒 + 是新事件
+            return True, False ,total_score # 是摔倒，但已记录
     else:
         status['fall_frame_count'] = 0
         status['is_falling'] = False
-    return is_fall, False
+    return is_fall, False,total_score
 
 
 # --- Intrusion Detection Logic ---
