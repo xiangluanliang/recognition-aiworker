@@ -39,7 +39,7 @@ DLIB_LANDMARK_PREDICTOR_FILENAME = 'shape_predictor_68_face_landmarks.dat'
 FACE_DETECTOR_CONFIDENCE_THRESHOLD = 0.5
 
 # Face Recognition
-FACE_RECOGNITION_THRESHOLD = 1.15  # 欧氏距离阈值，越小越相似
+FACE_RECOGNITION_THRESHOLD = 1.30  # 欧氏距离阈值，越小越相似
 
 # Liveness - OULU Model
 OULU_LIVENESS_INPUT_SIZE = (224, 224)
