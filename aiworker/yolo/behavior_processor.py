@@ -41,6 +41,7 @@ class AbnormalBehaviorProcessor:
         self.recorded_conflicts = set()
         self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))
         self.person_last_seen = {}
+        self.recent_falls = {}
 
         self.warning_zones = []
         if 'intrusion_detection' in self.active_detectors:
@@ -142,7 +143,9 @@ class AbnormalBehaviorProcessor:
                     self._log_event('intrusion', pid, confidences[i], frame,
                                     details={'zone_id': zone_info['id'], 'zone_name': zone_info['name']})
 
-            is_in_any_event = pid in all_event_pids
+            is_in_recent_fall = pid in self.recent_falls and (
+            self.frame_idx - self.recent_falls.get(pid, 0)) < FALL_HIGHLIGHT_DURATION_FRAMES
+            is_in_any_event = pid in all_event_pids or is_in_recent_fall  # 优先使用 recent_falls 的状态
             color = (0, 0, 255) if is_in_any_event else (0, 255, 0)
 
             draw_pose(processed_frame, kpts, color)
