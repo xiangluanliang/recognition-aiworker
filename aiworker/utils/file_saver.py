@@ -80,8 +80,8 @@ def save_clip(person_id, frame_idx, video_buffer, fps, sub_dir='clips', event_ty
         # --- 步骤 4: 无论成功与否，都删除临时文件 ---
         if os.path.exists(temp_path):
             pass
-            # os.remove(temp_path)
-            # logger.info(f"已删除临时视频文件: {temp_path}")
+            os.remove(temp_path)
+            logger.info(f"已删除临时视频文件: {temp_path}")
 
 def save_event_image(frame, person_id, frame_idx, sub_dir='images', event_type='event'):
     """保存事件的单帧截图。"""
