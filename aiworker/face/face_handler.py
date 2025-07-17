@@ -28,11 +28,20 @@ def _log_face_event_with_cooldown(event_type, person_data, frame):
     current_time = time.time()
     last_log_time = EVENT_LOG_COOLDOWN_CACHE.get(cache_key, 0)
 
-    # 检查是否仍在冷却时间内
+    if event_type == 'liveness_fraud':
+        stranger_cache_key = ('stranger_detected', session_identifier)
+        last_stranger_log_time = EVENT_LOG_COOLDOWN_CACHE.get(stranger_cache_key, 0)
+        
+        # 如果 "陌生人" 事件在冷却时间内，则直接忽略本次 "欺诈" 事件
+        if current_time - last_stranger_log_time < EVENT_COOLDOWN_SECONDS:
+            print(f"逻辑忽略：因已上报陌生人事件，本次活体欺诈事件 {event_type} 被抑制。")
+            return
+        
+    cache_key = (event_type, session_identifier)
+    last_log_time = EVENT_LOG_COOLDOWN_CACHE.get(cache_key, 0)
+
     if current_time - last_log_time < EVENT_COOLDOWN_SECONDS:
         return  # 在冷却期内，不执行任何操作
-
-    # --- 冷却期已过，执行事件上报 ---
 
     # 1. 保存证据图片
     # 使用 event_type 和时间戳创建唯一文件名
