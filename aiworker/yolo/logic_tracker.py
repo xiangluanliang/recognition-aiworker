@@ -10,17 +10,17 @@ def match_person_id(
 ) -> List[int]:
     """
     通过最小距离法，为当前帧检测到的人匹配之前帧的ID。
-
-    Args:
-        current_centers: 当前帧检测到的所有人的中心点列表。
-        prev_centers: 上一帧的ID与中心点的映射字典。
-        threshold: 匹配的最大像素距离。
-
-    Returns:
-        一个与 current_centers 对应的ID列表。
     """
+    # ✅ 核心修正：添加处理边界情况的保护逻辑 (Guard Clause)
     if not current_centers:
         return []
+
+    # 如果没有上一帧的记录可供匹配（例如，这是视频的第一帧），
+    # 那么当前帧检测到的所有人都是“新人物”，直接为他们分配从0开始的新ID。
+    if not prev_centers:
+        return list(range(len(current_centers)))
+
+    # --- 只有在 current_centers 和 prev_centers 都有数据时，才执行以下复杂的匹配逻辑 ---
 
     ids = [-1] * len(current_centers)
     used_prev_ids: Set[int] = set()
@@ -32,27 +32,29 @@ def match_person_id(
     prev_pids = list(prev_centers.keys())
 
     # 贪心匹配
+    # 增加一个检查，确保dist_matrix不是空的，以防万一
+    if dist_matrix.size == 0:
+        # 如果矩阵为空，说明无法匹配，直接分配新ID
+        next_id = max(prev_centers.keys(), default=-1) + 1
+        return list(range(next_id, next_id + len(current_centers)))
+
     while np.min(dist_matrix) < threshold:
         min_val = np.min(dist_matrix)
         if min_val >= threshold:
             break
 
-        # 找到距离最近的一对
         curr_idx, prev_idx_in_list = np.unravel_index(np.argmin(dist_matrix), dist_matrix.shape)
-
         pid = prev_pids[prev_idx_in_list]
 
-        # 如果双方都未被匹配，则成功匹配
         if ids[curr_idx] == -1 and pid not in used_prev_ids:
             ids[curr_idx] = pid
             used_prev_ids.add(pid)
 
-        # 将这对的距离设为无穷大，不再参与后续匹配
         dist_matrix[curr_idx, :] = float('inf')
         dist_matrix[:, prev_idx_in_list] = float('inf')
 
     # 为未匹配到的人分配新ID
-    next_id = max(prev_centers.keys(), default=0) + 1
+    next_id = max(prev_centers.keys(), default=-1) + 1
     for i in range(len(ids)):
         if ids[i] == -1:
             ids[i] = next_id
