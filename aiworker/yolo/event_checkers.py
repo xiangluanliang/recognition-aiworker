@@ -217,12 +217,15 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             pid1, pid2 = ids[i], ids[j]
+            center1, center2 = np.array(centers[i]), np.array(centers[j])
 
             # 1. 距离判断
             dist = np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
-            if dist >= dist_thresh:
-                continue
             dist_score = max(0.0, 1.0 - dist / dist_thresh)
+
+            # 跳过太远的人
+            if dist_score <= 0:
+                continue
 
             # 2. 判断关键点历史是否足够
             if len(fight_kpts_history[pid1]) < 5 or len(fight_kpts_history[pid2]) < 5:
@@ -231,37 +234,27 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
             # 3. 速度和加速度
             speed1 = calc_center_velocity(center_histories[pid1])
             speed2 = calc_center_velocity(center_histories[pid2])
+            speed_score = min((speed1 + speed2) / 2 / speed_thresh, 1.0)
+
             accel1 = calc_center_acceleration(center_histories[pid1])
             accel2 = calc_center_acceleration(center_histories[pid2])
-            if speed1 < speed_thresh and speed2 < speed_thresh:
-                continue
-            if accel1 < accel_thresh and accel2 < accel_thresh:
-                continue
-            speed_score = min((speed1 + speed2) / 2 / speed_thresh, 1.0)
             accel_score = min((accel1 + accel2) / 2 / accel_thresh, 1.0)
 
             # 4. 关键点变化
             kpts_change1 = calc_kpts_change(fight_kpts_history[pid1])
             kpts_change2 = calc_kpts_change(fight_kpts_history[pid2])
-            if kpts_change1 < kpts_change_thresh and kpts_change2 < kpts_change_thresh:
-                continue
             kpts_change_score = min((kpts_change1 + kpts_change2) / 2 / kpts_change_thresh, 1.0)
-
 
             # 5. 上半身运动判断
             motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
             motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
-            if motion1 < motion_thresh or motion2 < motion_thresh:
-                continue
             motion_score = min((motion1 + motion2) / 2 / motion_thresh, 1.0)
 
             # 6. 朝向判断
             vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
             vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
-            dot = np.dot(vec1, vec2)
-            if dot >= -orient_thresh:
-                continue
-            face_score = min(1.0, (abs(dot) - orient_thresh) / (1.0 - orient_thresh))
+            orientation_dot = np.dot(vec1, vec2)
+            face_score = min(1.0, (abs(orientation_dot) - orient_thresh) / (1.0 - orient_thresh)) if orientation_dot < -orient_thresh else 0.0
 
             # 5. 综合评分
             fight_score = round(
@@ -274,8 +267,20 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
                 3
             )
 
+            # 统计满足的强打架特征个数
+            strong_signs = 0
+            if motion_score > 0.5:  # 上半身剧烈运动
+                strong_signs += 1
+            if face_score > 0.5:  # 面对面朝向
+                strong_signs += 1
+            if speed_score > 0.5:  # 移动速度较快
+                strong_signs += 1
+            if kpts_change_score > 0.5:  # 关键点剧烈变化
+                strong_signs += 1
+
             # 6. 最终加入结果
-            conflicts.append((pid1, pid2, fight_score))
+            if fight_score >= 0.5 and strong_signs >= 2:
+                conflicts.append((pid1, pid2, fight_score))
 
     return conflicts
 
