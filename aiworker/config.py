@@ -11,9 +11,9 @@ CACHE_REFRESH_INTERVAL = 300  # 5 minutes
 MEDIA_ROOT = '/srv/http/recognition_media'
 
 # --- Stream Processing Parameters ---
-FRAME_WIDTH = 854
-FRAME_HEIGHT = 480
-FRAME_SKIP_RATE = 3  # 每5帧进行一次昂贵的AI计算
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
+FRAME_SKIP_RATE = 2  # 每3帧进行一次昂贵的AI计算
 JPEG_QUALITY = 70
 
 # --- Model Paths and Filenames ---
@@ -74,7 +74,7 @@ CLIP_DURATION_SECONDS = 2
 
 # Fall Detection
 FALL_ANGLE_THRESHOLD = 35.0 # 身体倾斜角度阈值
-FALL_WINDOW_SIZE = 3 # 连续N帧满足条件才判断为摔倒
+FALL_WINDOW_SIZE = 2 # 连续N帧满足条件才判断为摔倒
 FALL_COOLDOWN_FRAMES = 150 # 摔倒事件上报后的冷却时间
 
 # Intrusion Detection (默认值，实际会从API获取)

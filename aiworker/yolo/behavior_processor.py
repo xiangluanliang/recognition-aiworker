@@ -157,20 +157,28 @@ class AbnormalBehaviorProcessor:
     def _log_event(self, event_type: str, pid: int, confidence: float, frame: np.ndarray, details: dict = None):
         """
         内部辅助函数，用于统一处理事件的文件保存和API上报。
+        增加了异常处理，确保文件保存失败不会导致整个线程崩溃。
         """
         print(
             f"[事件] Camera {self.camera_id} 检测到 {event_type}，Person ID={pid}，置信度={confidence:.2f}，详情={details}")
         self.logger.info(f"Camera {self.camera_id}: Logging event '{event_type}' for person ID {pid}.")
 
-        # 1. 保存证据文件 (调用FileSaver模块)
-        clip_path = save_clip(
-            pid, self.frame_idx, self.video_buffer, self.fps, f'{event_type}_clips', event_type
-        )
-        image_path = save_event_image(
-            frame, pid, self.frame_idx, f'{event_type}_images', event_type
-        )
+        clip_path = None
+        image_path = None
 
-        # 2. 准备上报数据
+        try:
+            if frame is not None:
+                image_path = save_event_image(
+                    frame, pid, self.frame_idx, f'{event_type}_images', event_type
+                )
+
+            if self.video_buffer:
+                clip_path = save_clip(
+                    pid, self.frame_idx, self.video_buffer, self.fps, f'{event_type}_clips', event_type
+                )
+        except Exception as e:
+            self.logger.error(f"保存事件 '{event_type}' 的证据文件时发生异常: {e}", exc_info=True)
+
         event_data = {
             'camera_id': self.camera_id,
             'event_type': event_type,
@@ -180,5 +188,7 @@ class AbnormalBehaviorProcessor:
             'detection_details': details or {}
         }
 
-        # 3. 上报事件 (调用ApiClient模块)
-        log_event(event_data)
+        try:
+            log_event(event_data)
+        except Exception as e:
+            self.logger.error(f"上报事件 '{event_type}' 到Django API时失败: {e}", exc_info=True)
