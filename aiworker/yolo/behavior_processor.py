@@ -21,37 +21,34 @@ class AbnormalBehaviorProcessor:
     一个有状态的处理器，用于检测单个视频流中的异常行为。
     这个类的每个实例对应一个独立的视频流，并管理其所有状态。
     """
+
     def __init__(self, camera_id: int, yolo_detector: YoloDetector, fps: int, enabled_detectors: list[str]):
         self.logger = logging.getLogger(__name__)
         self.camera_id = camera_id
         self.yolo_detector = yolo_detector
         self.fps = fps
         self.active_detectors = set(enabled_detectors)
-        self.logger.info(f"处理器为摄像头 {camera_id} 初始化，启用的功能: {self.active_detectors}")
+        self.logger.info(f"处理器为摄像头 {self.camera_id} 初始化，启用的功能: {self.active_detectors}")
+
         self.frame_idx = 0
         self.prev_centers = {}
         self.video_buffer = deque(maxlen=int(self.fps * CLIP_DURATION_SECONDS))
-        self.person_history = defaultdict(list)
         self.person_fall_status = defaultdict(
             lambda: {'fall_frame_count': 0, 'is_falling': False, 'cooldown_counter': 0})
         self.zone_status_cache = defaultdict(dict)
         self.recorded_intrusions = set()
         self.recorded_conflicts = set()
-        self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))  # 打架检测需要最近5帧的姿态
-        self.prev_centers_history = defaultdict(lambda: deque(maxlen=5))  # 历史中心点，计算速度加速度等
+        self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))
 
         self.warning_zones = []
-
         if 'intrusion_detection' in self.active_detectors:
             raw_zones_data = fetch_warning_zones_for_camera(self.camera_id)
 
-            # 优化：解析每个区域的独立配置
             for zone_data in raw_zones_data:
                 polygon = [[pt['x'], pt['y']] for pt in zone_data.get('zone_points', [])]
                 if not polygon:
                     continue
 
-                # 为每个区域单独计算和存储其配置
                 stay_seconds = zone_data.get('safe_time', DEFAULT_STAY_SECONDS)
                 self.warning_zones.append({
                     'id': zone_data.get('id'),
@@ -62,9 +59,6 @@ class AbnormalBehaviorProcessor:
                 })
 
             self.logger.info(f"摄像头 {self.camera_id} 加载了 {len(self.warning_zones)} 个处理后的警戒区域。")
-
-        self.logger.info(
-            f"Processor for camera {camera_id} initialized with {len(self.warning_zones[self.camera_id])} zones.")
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
         """
