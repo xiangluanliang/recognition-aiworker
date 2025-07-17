@@ -73,7 +73,7 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
 
     score_thresh = 0.6  # 总分超过60
     extreme_wh_ratio = 1.2  # 宽高比超过1.2
-    is_fall = angle < angle_thresh or total_score >= score_thresh or wh_ratio > extreme_wh_ratio or (height_change > 0.3)
+    is_fall = angle < angle_thresh or total_score >= score_thresh  or (height_change > 0.3)
 
     if is_fall:
         status['fall_frame_count'] += 1
