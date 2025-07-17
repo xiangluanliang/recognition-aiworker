@@ -127,7 +127,8 @@ class AbnormalBehaviorProcessor:
             label = f"ID:{pid}"
             cv2.putText(processed_frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        draw_abnormal_zone(processed_frame, self.warning_zones.get(self.camera_id, []))
+        polygons_to_draw = [zone['polygon'] for zone in self.warning_zones]
+        draw_abnormal_zone(processed_frame, polygons_to_draw)
 
         return processed_frame, {}
 
