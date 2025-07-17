@@ -110,6 +110,7 @@ def process_report_generation(summary_data: dict) -> str:
     messages, event_stats = report_service_instance.build_chat_prompt(summary_data.copy())
     logger.info(f"为AI生成的聊天消息: {messages}")
 
+    logger.info(f"hhhhhhhhh不是这里的问题")
     # 生成表格（事件类型分布）
     table_content = ""
     if event_stats:
