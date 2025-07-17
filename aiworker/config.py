@@ -7,7 +7,8 @@ DJANGO_API_TOKEN = os.environ.get('DJANGO_API_TOKEN', '3d814802906b91d7947518f5d
 DJANGO_API_BASE_URL = os.environ.get('DJANGO_API_URL', 'https://8.152.101.217/api/test/api/')
 RTMP_SERVER_URL = os.environ.get('RTMP_SERVER_URL', 'rtmp://localhost:9090/live')
 CACHE_REFRESH_INTERVAL = 300  # 5 minutes
-MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/srv/http/recognition_media') # 媒体文件保存根目录
+# MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/media') # 媒体文件保存根目录
+MEDIA_ROOT = '/srv/http/recognition_media'
 
 # --- Stream Processing Parameters ---
 FRAME_WIDTH = 854
@@ -95,4 +96,13 @@ POSE_PAIRS = [
     (12, 14), (14, 16)
 ]
 
+# audio
+
+AUDIO_MODEL_DIR = os.path.join(MODEL_DIR, 'audio_models')
+METADATA_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'metadata')
+
+AUDIO_MODEL_CHECKPOINT_FILENAME = "Cnn14_mAP=0.431.pth"
+AUDIO_MODEL_LABELS_FILENAME = "class_labels_indices.csv"
+
+# deepseek key
 DEEPSEEK_API_KEY = 'sk-981044236a6a4402a991d5b83c8b61e2'

@@ -72,5 +72,4 @@ checkpoints/
 tensorboard/
 wandb/
 *.ckpt
-*.pth
 

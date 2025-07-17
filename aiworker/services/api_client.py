@@ -75,3 +75,21 @@ def get_camera_details(camera_id: int) -> dict | None:
     except requests.exceptions.RequestException as e:
         logger.error(f"请求摄像头 {camera_id} 详情时发生网络错误: {e}")
         return None
+
+def fetch_summary_for_report() -> dict | None:
+    """
+    从Django API获取日报所需的数据摘要。
+    在请求失败或响应不成功时，返回 None。
+    """
+    api_url = f"{DJANGO_API_BASE_URL}daily-report/data/"
+    headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
+    try:
+        response = requests.get(api_url, headers=headers, timeout=20, verify=False)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"请求报告数据失败，状态码: {response.status_code}, 响应: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"请求报告数据时发生网络错误: {e}")
+        return None

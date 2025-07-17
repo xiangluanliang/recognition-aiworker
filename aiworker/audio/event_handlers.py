@@ -1,39 +1,32 @@
-# event_handlers.py
-from .audio_detect import detect_audio_events
+# aiworker/audio/event_handlers.py
+
+from .audio_detect import AudioEventDetector
 from .preprocess import load_audio
 
+try:
+    audio_detector = AudioEventDetector()
+except Exception as e:
+    print(f"致命错误：无法初始化 AudioEventDetector: {e}")
+    audio_detector = None
+
 INTERESTING_CLASSES = {
-    "Screaming": 1.0,
-    "Shout": 1.0,
-    "Fight": 1.0,
-    "Gunshot, gunfire": 1.2,
-    "Fusillade": 1.2,
-    "Explosion": 1.5,
-    "Crying, sobbing": 0.8,
-    "Child screaming": 1.0,
-    "Yell": 1.0,
-    "Groan": 0.7,
-    "Whimper": 0.7,
-    "Wail, moan": 0.7,
+    "Explosion": 1.0,
+    "Gunshot": 2.0,
+    "Screaming": 1.5,
+    "Alarm": 1.0,
+    "Firecracker": 0.8,
+    "Shout": 1.2,
+    "Yell": 1.2,
+    "Crying, sobbing": 0.7
 }
+
 
 def is_abnormal(label, score):
     if label not in INTERESTING_CLASSES:
         return False
-    threshold = 0.25 / INTERESTING_CLASSES[label]  # 0.25是你现在的阈值
+    # 权重越高，阈值越低，越容易触发告警
+    threshold = 0.25 / INTERESTING_CLASSES[label]
     return score > threshold
-
-def handle_audio_file(path, processor):
-    waveform = load_audio(path)
-    results = detect_audio_events(waveform)
-    filtered_results = []
-    for label, score in results:
-        if label in INTERESTING_CLASSES:
-            if is_abnormal(label, score):
-                # --- 修改点 2：调用新的 trigger_alarm，并把 processor 传下去 ---
-                trigger_alarm(label, score, processor)
-            filtered_results.append({"label": label, "score": score})
-    return filtered_results
 
 
 def trigger_alarm(event, confidence, processor):
@@ -43,13 +36,42 @@ def trigger_alarm(event, confidence, processor):
     if processor:
         print(f"🚨 音频事件触发视频保存：{event} (置信度 {confidence:.2f})")
         # 复用已有的 _log_event 方法，实现音视频联合证据保全
-        # 我们虚构一个 person_id=0 来代表这是由环境（音频）触发的事件
+        event_type_key = f'audio_{event.lower().replace(", ", "_").replace(" ", "_")}'
         processor._log_event(
-            event_type=f'audio_{event.lower().replace(" ", "_")}',
-            pid=0,
+            event_type=event_type_key,
+            pid=0,  # 0 代表环境事件
             confidence=confidence,
             frame=processor.video_buffer[-1] if processor.video_buffer else None,
             details={'trigger': 'audio'}
         )
     else:
         print(f"🚨 触发异常声学告警：{event} (置信度 {confidence:.2f})")
+
+
+def handle_audio_file(path: str, processor):
+    """
+    处理单个音频文件的完整流程。
+    """
+    if not audio_detector:
+        print("错误：音频检测器未成功初始化，跳过处理。")
+        return []
+
+    # 1. 加载音频文件，确保采样率为32k
+    try:
+        waveform = load_audio(path, sr=32000)
+    except Exception as e:
+        print(f"错误：加载音频文件 {path} 失败: {e}")
+        return []
+
+    results = audio_detector.detect(waveform)
+
+    abnormal_events = []
+    for result in results:
+        label = result['label']
+        score = result['score']
+        if label in INTERESTING_CLASSES:
+            if is_abnormal(label, score):
+                trigger_alarm(label, score, processor)
+            abnormal_events.append(result)
+
+    return abnormal_events
