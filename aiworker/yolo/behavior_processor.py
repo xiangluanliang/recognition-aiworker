@@ -39,6 +39,7 @@ class AbnormalBehaviorProcessor:
         self.recorded_intrusions = set()
         self.recorded_conflicts = set()
         self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))
+        self.person_last_seen = {}
 
         self.warning_zones = []
         if 'intrusion_detection' in self.active_detectors:
@@ -60,6 +61,21 @@ class AbnormalBehaviorProcessor:
 
             self.logger.info(f"摄像头 {self.camera_id} 加载了 {len(self.warning_zones)} 个处理后的警戒区域。")
 
+    def _cleanup_stale_ids(self, current_pids: set, stale_threshold_frames: int = 300):
+        """
+        清理超过N帧（默认为10秒，假设30fps）未出现的陈旧ID，以释放内存。
+        """
+        stale_ids = [pid for pid, frame in self.person_last_seen.items() if
+                     self.frame_idx - frame > stale_threshold_frames]
+
+        if stale_ids:
+            self.logger.info(f"清理陈旧ID: {stale_ids}")
+            for pid in stale_ids:
+                self.person_last_seen.pop(pid, None)
+                self.prev_centers.pop(pid, None)
+                self.person_fall_status.pop(pid, None)
+                self.fight_kpts_history.pop(pid, None)
+
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
         """
         处理单帧图像，执行完整的检测、追踪、并根据配置动态判断、绘制流程。
@@ -69,16 +85,22 @@ class AbnormalBehaviorProcessor:
 
         kpts_list, centers, confidences = self.yolo_detector.detect_people(processed_frame)
         if not kpts_list:
+            if self.frame_idx % 100 == 0:
+                self._cleanup_stale_ids(set())
             return processed_frame, {}
 
         ids = match_person_id(centers, self.prev_centers, PERSON_MATCHING_THRESHOLD)
         self.prev_centers = {pid: center for pid, center in zip(ids, centers)}
+        current_pids = set(ids)
+
+        for pid in current_pids:
+            self.person_last_seen[pid] = self.frame_idx
 
         all_event_pids = set()
 
         if 'fight_detection' in self.active_detectors:
-            for i, kpts in enumerate(kpts_list):
-                self.fight_kpts_history[ids[i]].append(kpts.copy())
+            for i, pid in enumerate(ids):
+                self.fight_kpts_history[pid].append(kpts_list[i].copy())
 
             conflict_pairs = detect_fight(
                 ids, centers, self.fight_kpts_history,
@@ -92,15 +114,12 @@ class AbnormalBehaviorProcessor:
                         self._log_event('conflict', pid, 0.99, frame)
 
         for i, (pid, kpts) in enumerate(zip(ids, kpts_list)):
-            is_fall_event = False
-            is_intruding_event = False
-
             x1, y1 = np.min(kpts[:, 0]), np.min(kpts[:, 1])
             x2, y2 = np.max(kpts[:, 0]), np.max(kpts[:, 1])
             bbox = (int(x1), int(y1), int(x2), int(y2))
 
             if 'fall_detection' in self.active_detectors:
-                is_fall_event, is_new_fall, score = check_fall(
+                _, is_new_fall, score = check_fall(
                     pid, kpts, bbox, self.person_fall_status,
                     FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
                 )
@@ -109,7 +128,7 @@ class AbnormalBehaviorProcessor:
                     self._log_event('person_fall', pid, score, frame)
 
             if 'intrusion_detection' in self.active_detectors:
-                is_intruding, new_intrusion_zones_info = check_intrusion(
+                is_intruding_event, new_intrusion_zones_info = check_intrusion(
                     pid, bbox, centers[i],
                     self.warning_zones,
                     self.recorded_intrusions, self.zone_status_cache, self.frame_idx
@@ -119,16 +138,19 @@ class AbnormalBehaviorProcessor:
                     self._log_event('intrusion', pid, confidences[i], frame,
                                     details={'zone_id': zone_info['id'], 'zone_name': zone_info['name']})
 
-            is_in_any_event = pid in all_event_pids or is_fall_event or is_intruding_event
+            is_in_any_event = pid in all_event_pids
             color = (0, 0, 255) if is_in_any_event else (0, 255, 0)
 
             draw_pose(processed_frame, kpts, color)
-            cv2.rectangle(processed_frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            cv2.rectangle(processed_frame, bbox[:2], bbox[2:], color, 2)
             label = f"ID:{pid}"
-            cv2.putText(processed_frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.putText(processed_frame, label, (bbox[0], bbox[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         polygons_to_draw = [zone['polygon'] for zone in self.warning_zones]
         draw_abnormal_zone(processed_frame, polygons_to_draw)
+
+        if self.frame_idx % 100 == 0:
+            self._cleanup_stale_ids(current_pids)
 
         return processed_frame, {}
 
