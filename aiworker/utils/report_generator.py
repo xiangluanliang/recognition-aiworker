@@ -1,11 +1,10 @@
 import os
-import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import logging
+import torch
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - (ReportGenerator) - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class ReportGeneratorService:
     """
@@ -20,11 +19,25 @@ class ReportGeneratorService:
         """
         self.model = None
         self.tokenizer = None
+        self.device = None
+
         logger.info(f"开始加载模型: {self.MODEL_NAME}...")
         try:
-            # 加载分词器
-            self.tokenizer = None
-            self.model = None
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.MODEL_NAME,
+                trust_remote_code=True
+            )
+
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.MODEL_NAME,
+                trust_remote_code=True
+            )
+
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model.to(self.device)
+            self.model.eval()
+
+            logger.info(f"模型 {self.MODEL_NAME} 加载成功，运行在设备: {self.device}")
 
         except Exception as e:
             logger.error(f"加载模型 {self.MODEL_NAME} 失败: {e}", exc_info=True)
@@ -48,24 +61,18 @@ class ReportGeneratorService:
             "特别说明：'区域入侵' 是指检测到人员进入了不允许进入的安全区域。\n\n",
             "数据摘要如下："]
 
-        # 优雅地处理嵌套的事件统计
         event_stats = summary_data.pop('各类型事件统计', {})
 
-        # 格式化主要数据
         for key, value in summary_data.items():
             prompt_lines.append(f"- {key}: {value}")
 
-        # 格式化各类型事件统计
         if event_stats:
             prompt_lines.append("- 各类型事件统计:")
             for event_type, count in event_stats.items():
                 prompt_lines.append(f"  - {event_type}: {count}")
 
-        # 最终指令
         prompt_lines.append("\n请输出一段自然语言格式的中文报告，内容应包括：事件概况、摄像头状态，并对潜在的风险进行提醒。")
-
         user_prompt = "\n".join(prompt_lines)
-
         messages = [
             {"role": "system", "content": "你是一个安防监控系统的智能助手，负责生成专业的安防日报。"},
             {"role": "user", "content": user_prompt}
@@ -74,66 +81,42 @@ class ReportGeneratorService:
 
     def generate_text(self, messages: list[dict]) -> str:
         """
-        使用加载的模型，根据输入的 messages 生成文本。
-
-        Args:
-            messages: 包含聊天历史的列表。
-
-        Returns:
-            由 AI 模型生成的报告内容字符串。
+        使用已加载的模型，根据输入的 messages 生成文本。
         """
         if not self.model or not self.tokenizer:
+            logger.error("服务未正确初始化，无法生成报告。")
             raise RuntimeError("服务未正确初始化，模型或分词器不可用。")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-                self.MODEL_NAME,
-                trust_remote_code=True
+        try:
+            input_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
             )
+            inputs = self.tokenizer(input_text, return_tensors="pt").to(self.device)
+            outputs = self.model.generate(**inputs, max_new_tokens=512)
+            response = self.tokenizer.decode(
+                outputs[0][inputs.input_ids.shape[-1]:],
+                skip_special_tokens=True
+            )
+            return response.strip()
 
-        AutoModelForCausalLM.from_pretrained(
-            self.MODEL_NAME,
-            trust_remote_code=True
-        ).eval()
-
-        if torch.cuda.is_available():
-            self.model = self.model.to('cuda')
-            logger.info("模型已成功加载到 CUDA (GPU)。")
-        else:
-            logger.info("模型已成功加载到 CPU。")
-
-        # 使用 apply_chat_template 来格式化输入，这是与聊天模型交互的推荐方式
-        input_text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-
-        # 编码输入
-        device = self.model.device
-        inputs = self.tokenizer(input_text, return_tensors="pt").to(device)
-
-        # 模型推理
-        outputs = self.model.generate(**inputs, max_new_tokens=512)
-
-        # 解码模型输出，并跳过 prompt 部分
-        response = self.tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[-1]:],
-            skip_special_tokens=True
-        )
-
-        return response.strip()
+        except Exception as e:
+            logger.error(f"生成报告时发生错误: {e}", exc_info=True)
+            return ""  # 返回空字符串，让上层处理
 
 
 try:
     report_service_instance = ReportGeneratorService()
 except Exception as e:
-    logger.error(f"无法实例化 ReportGeneratorService: {e}")
+    logger.critical(f"无法实例化 ReportGeneratorService，报告生成功能将不可用: {e}")
     report_service_instance = None
 
 
 def process_report_generation(summary_data: dict) -> str:
     """
     处理日报生成的核心流程。
+    (此函数逻辑正确，保持不变)
     """
     if report_service_instance is None:
         raise ConnectionError("ReportGeneratorService failed to initialize.")
@@ -154,52 +137,3 @@ def process_report_generation(summary_data: dict) -> str:
             f"摄像头状态：{online_cameras}/{total_cameras} 台在线。"
         )
     return report_content
-
-
-if __name__ == '__main__':
-    # 示例1: 有事件发生的情况
-    print("\n" + "=" * 20 + " 测试案例 1: 有事件发生 " + "=" * 20)
-    summary_data_with_events = {
-        '日期': '2025-07-13',
-        '总事件数': 14,
-        '未处理事件数': 3,
-        '处理中事件数': 4,
-        '已处理事件数': 7,
-        '摄像头总数': 20,
-        '在线摄像头': 18,
-        '各类型事件统计': {
-            '人脸识别匹配': 5,
-            '火警': 2,
-            '区域入侵': 6,
-            '人员冲突': 1,
-        }
-    }
-
-    try:
-        final_report_1 = process_report_generation(summary_data_with_events)
-        print("\n--- ✅ 生成的最终报告 1 ---\n")
-        print(final_report_1)
-    except ConnectionError as e:
-        print(f"\n--- ❌ 报告生成失败 ---")
-        print(e)
-
-    # 示例2: 你提供的无事件的真实输入
-    print("\n\n" + "=" * 20 + " 测试案例 2: 无事件发生 " + "=" * 20)
-    summary_data_no_events = {
-        "日期": "2025-07-14",
-        "总事件数": 0,
-        "未处理事件数": 0,
-        "处理中事件数": 0,
-        "已处理事件数": 0,
-        "摄像头总数": 4,
-        "在线摄像头": 3,
-        "各类型事件统计": {}
-    }
-
-    try:
-        final_report_2 = process_report_generation(summary_data_no_events)
-        print("\n--- ✅ 生成的最终报告 2 ---\n")
-        print(final_report_2)
-    except ConnectionError as e:
-        print(f"\n--- ❌ 报告生成失败 ---")
-        print(e)
