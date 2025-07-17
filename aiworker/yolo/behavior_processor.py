@@ -110,6 +110,7 @@ class AbnormalBehaviorProcessor:
                 for pid in [pid1, pid2]:
                     all_event_pids.add(pid)
                     if (pid, int(time.time()) // 10) not in self.recorded_conflicts:
+                        self.logger.error(f"检测到打架行为。")
                         self.recorded_conflicts.add((pid, int(time.time()) // 10))
                         self._log_event('conflict', pid, 0.99, frame)
 
@@ -124,6 +125,7 @@ class AbnormalBehaviorProcessor:
                     FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
                 )
                 if is_new_fall:
+                    self.logger.error(f"检测到摔倒。")
                     all_event_pids.add(pid)
                     self._log_event('person_fall', pid, score, frame)
 
@@ -135,6 +137,7 @@ class AbnormalBehaviorProcessor:
                 )
                 for zone_info in new_intrusion_zones_info:
                     all_event_pids.add(pid)
+                    self.logger.error(f"检测到区域入侵行为。")
                     self._log_event('intrusion', pid, confidences[i], frame,
                                     details={'zone_id': zone_info['id'], 'zone_name': zone_info['name']})
 

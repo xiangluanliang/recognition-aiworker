@@ -2,6 +2,8 @@
 import numpy as np
 from matplotlib.path import Path
 
+from aiworker.config import FRAME_SKIP_RATE
+
 
 # --- Fall Detection Logic ---
 def _angle_between_points(a, b, c):
@@ -21,39 +23,78 @@ def is_likely_horizontal(bbox, threshold=1.2):
 
 
 def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_size, cooldown_frames):
+
+    fps = 25
+    frame_interval = FRAME_SKIP_RATE
+
+    # -----  条件1：关键角度
+
+    # 计算关键角度
+    mid_shoulder = (kpts[5] + kpts[6]) / 2
+    mid_hip = (kpts[11] + kpts[12]) / 2
+
+    angle = _angle_between_points(kpts[0], mid_shoulder, mid_hip)
+
+    # -----  条件2：肩宽比
+
+    # 宽高比计算
+    x1, y1, x2, y2 = bbox
+    width = x2 - x1
+    height = y2 - y1
+    wh_ratio = width / (height + 1e-5)
+
+    # -----  条件3：姿势水平情况
+
+    # 判断姿势是否“水平”
+    is_horizontal = is_likely_horizontal(bbox)
+    angle_thresh = base_angle_thresh + 15 if is_horizontal else base_angle_thresh
+
+    # -----  条件4：高度变化检测
+    status = person_fall_status[pid]
+    if 'prev_height' not in status:
+        status['prev_height'] = height
+    height_change = abs(height - status['prev_height']) / (status['prev_height'] + 1e-5)
+    status['prev_height'] = height
+
+    if 'fall_time' not in status:
+        status['fall_time'] = 0.0
+
+    # -----  分数计算
+
+    # 角度得分（0-30）
+    angle_score = 30 if angle < 10 else np.clip((angle_thresh - angle) / angle_thresh * 30, 0, 30)
+    # 宽高比得分（0-50）
+    wh_score = np.clip((wh_ratio - 1) / 1.2 * 40, 0, 40)
+    # 高度变化分数
+    motion_score = np.clip(height_change / 0.3 * 10, 0, 10)
+    # 动作持续得分（0-20）
+    # status = person_fall_status[pid]
+    # duration_score = np.clip(status['fall_frame_count'] / window_size * 20, 0, 20)
+    duration_score = np.clip(status['fall_time'] / 0.3 * 20, 0, 20)
+
+    total_score = (1.5 * angle_score + 1.2 * wh_score + 1.0 * motion_score + 1.8 * duration_score) / 100
+
     status = person_fall_status[pid]
 
     if status['cooldown_counter'] > 0:
         status['cooldown_counter'] -= 1
         return True, False, 0.9
 
-    # --- 获取所有特征 ---
-    x1, y1, x2, y2 = bbox
-    height = y2 - y1
-    width = x2 - x1
-    wh_ratio = width / (height + 1e-5)
+    score_thresh = 0.45  # 总分超过45
+    extreme_wh_ratio = 1.2  # 宽高比超过1.2
+    is_fall = angle < angle_thresh or total_score >= score_thresh  or (height_change > 0.3) or wh_ratio > extreme_wh_ratio
 
-    # 动态特征：垂直速度
-    center_y = (kpts[5][1] + kpts[6][1]) / 2
-    prev_center_y = status.get('prev_y', center_y)
-    vertical_velocity = center_y - prev_center_y
-    status['prev_y'] = center_y
-    velocity_threshold = height * 0.25
-    is_sudden_drop = vertical_velocity > velocity_threshold
+    if is_fall:
+        # status['fall_frame_count'] += 1
+        status['fall_time'] += (frame_interval / fps)
 
-    # 静态特征：身体角度
-    mid_shoulder = (kpts[5] + kpts[6]) / 2
-    mid_hip = (kpts[11] + kpts[12]) / 2
-    angle = _angle_between_points(kpts[0], mid_shoulder, mid_hip)
-    is_angle_fall = angle < base_angle_thresh
-
-    # 静态特征：宽高比
-    is_ratio_fall = wh_ratio > 1.2
-
-    # --- ✅ 优化后的判断逻辑 ---
-    # 只要满足“快速下坠”，或者任何一个“躺倒”的静态特征，就累加计数
-    if is_sudden_drop or is_angle_fall or is_ratio_fall:
-        status['fall_frame_count'] += 1
+        # if status['fall_frame_count'] >= 0.2:
+        if status['fall_time'] >= 0.2:
+            if not status.get('is_falling', False):
+                status['is_falling'] = True
+                status['cooldown_counter'] = cooldown_frames
+                return True, True ,total_score # 是摔倒 + 是新事件
+            return True, False ,total_score # 是摔倒，但已记录
     else:
         # 只有在所有摔倒迹象都消失时，才重置计数器
         status['fall_frame_count'] = 0
