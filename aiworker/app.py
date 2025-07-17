@@ -22,11 +22,8 @@ from aiworker.face.vision_service import VisionServiceWorker
 from aiworker.face.face_handler import process_frame_for_api
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
 from aiworker.yolo.yolo_detector import YoloDetector
-
-
-# 导入音频模块
 # from aiworker.audio.event_handlers import handle_audio_file
-# from aiworker.report.report_generator import process_report_generation
+from aiworker.utils.report_generator import process_report_generation
 
 # --- Flask App 初始化 ---
 app = Flask(__name__)
@@ -289,8 +286,7 @@ def generate_report_endpoint():
         # 1. 从Django获取数据
         summary_data = fetch_summary_for_report()
 
-        report_content = "模块升级中"
-        # report_content = process_report_generation(summary_data)
+        report_content = process_report_generation(summary_data)
         return jsonify({
             "status": "success",
             "message": "Daily report generated and submitted successfully.",
