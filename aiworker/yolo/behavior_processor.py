@@ -21,14 +21,13 @@ class AbnormalBehaviorProcessor:
     一个有状态的处理器，用于检测单个视频流中的异常行为。
     这个类的每个实例对应一个独立的视频流，并管理其所有状态。
     """
-
-    def __init__(self, camera_id: int, yolo_detector: YoloDetector, fps: int):
+    def __init__(self, camera_id: int, yolo_detector: YoloDetector, fps: int, enabled_detectors: list[str]):
         self.logger = logging.getLogger(__name__)
         self.camera_id = camera_id
-        self.yolo_detector = yolo_detector  # 接收全局唯一的YOLO检测器实例
+        self.yolo_detector = yolo_detector
         self.fps = fps
-
-        # --- 初始化此视频流的所有状态变量 ---
+        self.active_detectors = set(enabled_detectors)
+        self.logger.info(f"处理器为摄像头 {camera_id} 初始化，启用的功能: {self.active_detectors}")
         self.frame_idx = 0
         self.prev_centers = {}
         self.video_buffer = deque(maxlen=int(self.fps * CLIP_DURATION_SECONDS))
@@ -66,97 +65,70 @@ class AbnormalBehaviorProcessor:
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
         """
-        处理单帧图像，执行完整的检测、追踪、判断、绘制流程。
+        处理单帧图像，执行完整的检测、追踪、并根据配置动态判断、绘制流程。
         """
         self.frame_idx += 1
         processed_frame = frame.copy()
-        self.video_buffer.append(frame)  # 持续缓冲原始视频帧，用于保存切片
 
-        # 1. 目标检测 (调用YoloDetector模块)
         kpts_list, centers, confidences = self.yolo_detector.detect_people(processed_frame)
-
-        zones = self.warning_zones.get(self.camera_id, [])
-        # print(f"Drawing {len(zones)} zones: {zones}")
-        draw_abnormal_zone(processed_frame, zones)
-
         if not kpts_list:
             return processed_frame, {}
 
-        # 2. 目标追踪 (调用LogicTracker模块)
-        if not centers or not self.prev_centers:
-            # 如果任意一方为空，直接给 ids 一个简单序号列表，避免空数组传入match_person_id
-            ids = list(range(len(centers)))
-        else:
-            ids = match_person_id(centers, self.prev_centers, PERSON_MATCHING_THRESHOLD)
+        ids = match_person_id(centers, self.prev_centers, PERSON_MATCHING_THRESHOLD)
         self.prev_centers = {pid: center for pid, center in zip(ids, centers)}
 
         all_event_pids = set()
 
-        # 3. 更新用于打架检测的历史姿态数据
-        for i, kpts in enumerate(kpts_list):
-            self.fight_kpts_history[ids[i]].append(kpts.copy())
+        if 'fight_detection' in self.active_detectors:
+            for i, kpts in enumerate(kpts_list):
+                self.fight_kpts_history[ids[i]].append(kpts.copy())
 
-        for pid, center in zip(ids, centers):
-            self.prev_centers_history[pid].append(center)
+            conflict_pairs = detect_fight(
+                ids, centers, self.fight_kpts_history,
+                FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD
+            )
+            for pid1, pid2 in conflict_pairs:
+                for pid in [pid1, pid2]:
+                    all_event_pids.add(pid)
+                    if (pid, int(time.time()) // 10) not in self.recorded_conflicts:
+                        self.recorded_conflicts.add((pid, int(time.time()) // 10))
+                        self._log_event('conflict', pid, 0.99, frame)
 
-        # 4. 事件检测 (调用EventCheckers模块)
-        conflict_pairs_with_scores = detect_fight(
-            ids, centers, self.fight_kpts_history,self.prev_centers_history,
-            FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD,
-            FIGHT_SPEED_THRESHOLD,FIGHT_ACCELERATION_THRESHOLD,FIGHT_KPTS_CHANGE_THRESHOLD
-        )
+        for i, (pid, kpts) in enumerate(zip(ids, kpts_list)):
+            is_fall_event = False
+            is_intruding_event = False
 
-        all_event_pids = set()  # 记录本帧所有参与事件的人员ID，用于高亮绘制
-        # 处理打架事件
-        for pid1, pid2, conflict_scores in conflict_pairs_with_scores:
-            for pid in [pid1, pid2]:
-                all_event_pids.add(pid)
-                # 10秒内对同一个人只上报一次打架事件，避免事件风暴
-                if (pid, int(time.time()) // 10) in self.recorded_conflicts: continue
-                self.recorded_conflicts.add((pid, int(time.time()) // 10))
-                self._log_event('conflict', pid, conflict_scores, frame)
-
-        # 遍历每个人，检测摔倒和入侵
-        for i, kpts in enumerate(kpts_list):
-            pid = ids[i]
-
-            # 先算bbox
             x1, y1 = np.min(kpts[:, 0]), np.min(kpts[:, 1])
             x2, y2 = np.max(kpts[:, 0]), np.max(kpts[:, 1])
             bbox = (int(x1), int(y1), int(x2), int(y2))
 
-            # 检测摔倒
-            is_fall, is_new_fall, score = check_fall(
-                pid, kpts, bbox, self.person_fall_status,
-                FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
-            )
-            # 检测入侵
-            is_intruding, new_intrusion_zones = check_intrusion(
-                pid, bbox, centers[i], self.camera_id, self.warning_zones,
-                self.recorded_intrusions, self.zone_status_cache, self.frame_idx,
-                self.stay_frames_required, self.safe_distance
-            )
+            if 'fall_detection' in self.active_detectors:
+                is_fall_event, is_new_fall, score = check_fall(
+                    pid, kpts, bbox, self.person_fall_status,
+                    FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
+                )
+                if is_new_fall:
+                    all_event_pids.add(pid)
+                    self._log_event('person_fall', pid, score, frame)
 
-            # 如果是新发生的事件，则记录并上报
-            if is_new_fall:
-                all_event_pids.add(pid)
-                self._log_event('person_fall', pid, score, frame)
+            if 'intrusion_detection' in self.active_detectors:
+                is_intruding_event, new_intrusion_zones = check_intrusion(
+                    pid, bbox, centers[i], self.camera_id, self.warning_zones,
+                    self.recorded_intrusions, self.zone_status_cache, self.frame_idx,
+                    self.stay_frames_required, self.safe_distance
+                )
+                for zone_index in new_intrusion_zones:
+                    all_event_pids.add(pid)
+                    self._log_event('intrusion', pid, confidences[i], frame, details={'zone_index': zone_index})
 
-            for zone_index in new_intrusion_zones:
-                all_event_pids.add(pid)
-                self._log_event('intrusion', pid, confidences[i], frame, details={'zone_index': zone_index})
-
-            # 5. 绘制结果 (调用Drawing模块)
-            is_in_event = pid in all_event_pids or is_fall or is_intruding
-            color = (0, 0, 255) if is_in_event else (0, 255, 0)
+            is_in_any_event = pid in all_event_pids or is_fall_event or is_intruding_event
+            color = (0, 0, 255) if is_in_any_event else (0, 255, 0)
 
             draw_pose(processed_frame, kpts, color)
             cv2.rectangle(processed_frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-
             label = f"ID:{pid}"
             cv2.putText(processed_frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        # 绘制警戒区
         draw_abnormal_zone(processed_frame, self.warning_zones.get(self.camera_id, []))
 
         return processed_frame, {}
