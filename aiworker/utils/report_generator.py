@@ -128,7 +128,7 @@ def process_report_generation(summary_data: dict) -> str:
         table_content = tabulate(
             table_data,
             headers=["事件类型", "发生次数", "未处理数", "处理中数", "已处理数", "涉及摄像头数"],
-            tablefmt="html",
+            tablefmt="github",
             stralign="center",
             numalign="center"
         )
@@ -141,7 +141,7 @@ def process_report_generation(summary_data: dict) -> str:
     logger.info(f"从AI生成的文本: '{report_content}'")
 
     # 组合最终报告
-    final_report = f"监控日报 ({summary_data.get('日期', 'N/A')})\n\n"
+    final_report = ""
     if report_content:
         # 插入表格到事件类型分布部分
         sections = report_content.split("###")
