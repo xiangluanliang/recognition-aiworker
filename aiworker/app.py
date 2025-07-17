@@ -105,30 +105,29 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
         success, frame = cap.read()
         if not success:
             time.sleep(0.1)
-            # 如果视频流断开，我们可以尝试重连
             cap.release()
             cap = cv2.VideoCapture(rtmp_url)
             app.logger.warning(f"Stream {stream_id} disconnected. Attempting to reconnect...")
             continue
 
-        # 视频帧的处理逻辑保持不变
-        processor_instance.video_buffer.append(frame.copy())  # 确保视频缓冲区持续更新
+        frame_count += 1
+
         frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
 
         if frame_count % FRAME_SKIP_RATE != 0:
-            frame_count += 1
             continue
 
+        # --- 帧处理逻辑 ---
         processed_frame = frame
         if ai_function_name == 'abnormal_detection' and processor_instance:
+            if hasattr(processor_instance, 'video_buffer'):
+                processor_instance.video_buffer.append(frame.copy())
             processed_frame, _ = processor_instance.process_frame(frame)
 
         ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ret:
             with stream_lock:
                 video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
-
-        frame_count += 1
 
     cap.release()
     video_streams_cache.pop(cache_key, None)
