@@ -2,7 +2,7 @@
 import numpy as np
 from matplotlib.path import Path
 
-from aiworker.config import FRAME_SKIP_RATE
+from aiworker.config import FRAME_SKIP_RATE, INTRUSION_GRACE_PERIOD_FRAMES
 
 
 # --- Fall Detection Logic ---
