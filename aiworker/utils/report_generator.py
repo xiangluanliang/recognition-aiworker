@@ -164,7 +164,7 @@ def process_report_generation(summary_data: dict) -> str:
     return final_report
 
 if __name__ == '__main__':
-    # 示例1: 有事件发生的情况
+    # 示例1: 有事件发生的情况（结构化事件统计）
     print("\n" + "=" * 20 + " 测试案例 1: 有事件发生 " + "=" * 20)
     summary_data_with_events = {
         '日期': '2025-07-13',
@@ -175,16 +175,40 @@ if __name__ == '__main__':
         '摄像头总数': 20,
         '在线摄像头': 18,
         '各类型事件统计': {
-            '人脸识别匹配': 5,
-            '火警': 2,
-            '区域入侵': 6,
-            '人员冲突': 1,
+            '人脸识别匹配': {
+                'count': 5,
+                'unprocessed': 1,
+                'processing': 2,
+                'processed': 2,
+                'cameras': 3,
+            },
+            '火警': {
+                'count': 2,
+                'unprocessed': 0,
+                'processing': 1,
+                'processed': 1,
+                'cameras': 1,
+            },
+            '区域入侵': {
+                'count': 6,
+                'unprocessed': 3,
+                'processing': 2,
+                'processed': 1,
+                'cameras': 4,
+            },
+            '人员冲突': {
+                'count': 1,
+                'unprocessed': 0,
+                'processing': 0,
+                'processed': 1,
+                'cameras': 1,
+            },
         }
     }
 
     try:
         final_report_1 = process_report_generation(summary_data_with_events)
-        print("\n--- professors✅ 生成的最终报告 1 ---\n")
+        print("\n--- ✅ 生成的最终报告 1 ---\n")
         print(final_report_1)
     except ConnectionError as e:
         print(f"\n--- ❌ 报告生成失败 ---")
@@ -200,7 +224,7 @@ if __name__ == '__main__':
         "已处理事件数": 0,
         "摄像头总数": 4,
         "在线摄像头": 3,
-        "各类型事件统计": {}
+        "各类型事件统计": {}  # 空表示无记录
     }
 
     try:
