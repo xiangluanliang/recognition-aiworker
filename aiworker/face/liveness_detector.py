@@ -36,8 +36,9 @@ class LivenessDetector:
 
     def reset_blink_state(self):
         """重置眨眼检测的状态，用于新的会话。"""
-        self.eye_closed_for_frames = 0
-        self.blink_detected = False
+        self.has_seen_eyes_open = False
+        self.has_seen_eyes_closed = False
+        self.blink_completed = False
 
     def _eye_aspect_ratio(self, eye_points):
         A = euclidean(eye_points[1], eye_points[5])
@@ -50,6 +51,9 @@ class LivenessDetector:
         使用 Mediapipe 检测眨眼。
         不再需要 face_rect 和 gray_frame。
         """
+        if self.blink_completed:
+            return "BLINK_COMPLETED"
+
         try:
             image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image_rgb.flags.writeable = False
@@ -71,17 +75,22 @@ class LivenessDetector:
             rightEAR = self._eye_aspect_ratio(right_eye_points)
             ear = (leftEAR + rightEAR) / 2.0
 
-            if self.blink_detected:
-                return "BLINK_COMPLETED"
+            # 根据当前帧的眼睛开合状态，更新我们的“目击”记录
             if ear < EYE_AR_THRESH:
-                self.eye_closed_for_frames += 1
-                return f"EYES_CLOSED (EAR: {ear:.2f})"
+                self.has_seen_eyes_closed = True
+                current_status_msg = "EYES_CLOSED"
             else:
-                if self.eye_closed_for_frames >= 1:
-                    self.blink_detected = True
-                    return "BLINK_COMPLETED"
-                self.eye_closed_for_frames = 0
-                return f"EYES_OPEN (EAR: {ear:.2f})"
+                self.has_seen_eyes_open = True
+                current_status_msg = "EYES_OPEN"
+
+            # 检查是否两种状态都已集齐
+            if self.has_seen_eyes_open and self.has_seen_eyes_closed:
+                self.blink_completed = True  # 锁定完成状态
+                return "BLINK_COMPLETED"
+
+            # 如果还未集齐，返回当前状态
+            return f"{current_status_msg} (EAR: {ear:.2f})"
+
         except Exception as e:
             self.logger.error(f"Error during Mediapipe blink detection: {e}")
             return "MEDIAPIPE_ERROR"
@@ -127,4 +136,8 @@ class LivenessDetector:
                 'blink_status': blink_status,
                 'combined_live_status': is_live
             })
+
+        if self.blink_completed:
+            self.reset_blink_state()
+
         return liveness_results
