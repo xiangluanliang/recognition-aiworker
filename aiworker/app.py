@@ -16,6 +16,8 @@ from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from flask_sock import Sock
 
+from aiworker.audio.event_handlers import audio_detector, INTERESTING_CLASSES, is_abnormal, trigger_alarm
+from aiworker.audio.preprocess import load_audio
 # --- 导入重构后的模块 ---
 from aiworker.config import *
 from aiworker.services.api_client import *
@@ -41,32 +43,39 @@ yolo_detector = YoloDetector(YOLO_POSE_MODEL_FILENAME)
 video_streams_cache = {}
 AI_FUNCTIONS = ['abnormal_detection']
 
-# def audio_detect_thread(rtmp_url_inner, camera_id_inner, processor):
-#     while True:
-#         audio_path = None  # 初始化
-#         try:
-#             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-#                 audio_path = tmp_audio.name
-#
-#             command = [
-#                 "ffmpeg", "-y", "-i", rtmp_url_inner,
-#                 "-t", "5",
-#                 "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-#                 audio_path
-#             ]
-#             subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-#
-#             # 用 handle_audio_file 时，传入 processor 实例 ---
-#             handle_audio_file(audio_path, processor)
-#
-#         except Exception as e:
-#             app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
-#
-#         finally:
-#             if audio_path and os.path.exists(audio_path):
-#                 os.remove(audio_path)
-#
-#         time.sleep(10)
+def audio_detect_thread(rtmp_url, camera_id, processor):
+    while True:
+        audio_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+                audio_path = tmp_audio.name
+
+            # 5秒音频采样，采样率32k，单声道
+            command = [
+                "ffmpeg", "-y", "-i", rtmp_url,
+                "-t", "5",
+                "-vn", "-acodec", "pcm_s16le", "-ar", "32000", "-ac", "1",
+                audio_path
+            ]
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            waveform = load_audio(audio_path, sr=32000)
+            results = audio_detector.detect(waveform)
+
+            for result in results:
+                label = result['label']
+                score = result['score']
+                if label in INTERESTING_CLASSES and is_abnormal(label, score):
+                    trigger_alarm(label, score, processor)
+
+        except Exception as e:
+            logger.error(f"[AudioThread-{camera_id}] 音频处理失败: {e}")
+
+        finally:
+            if audio_path and os.path.exists(audio_path):
+                os.remove(audio_path)
+
+        time.sleep(5)  # 每多少秒采集一次，可以调
 
 def frame_reader_thread(cap: cv2.VideoCapture, frame_queue: queue.Queue):
     """一个专门负责从VideoCapture对象中读取帧并放入队列的线程。"""
@@ -117,6 +126,14 @@ def capture_and_process_thread(ai_function_name: str, camera_id: str):
     processor_instance = AbnormalBehaviorProcessor(
         camera_id_int, yolo_detector, fps, enabled_detectors=active_detectors
     )
+
+    # 启动音频检测线程
+    audio_thread = threading.Thread(
+        target=audio_detect_thread,
+        args=(rtmp_url, camera_id_int, processor_instance),
+        daemon=True
+    )
+    audio_thread.start()
 
     frame_queue = queue.Queue(maxsize=50)
     reader = threading.Thread(target=frame_reader_thread, args=(cap, frame_queue), daemon=True)

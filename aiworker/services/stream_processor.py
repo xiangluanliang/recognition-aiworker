@@ -98,10 +98,10 @@ def extract_audio_from_rtmp(rtmp_url: str, duration: int = 10):
 
 def audio_detection_loop(rtmp_url: str, camera_id: int, interval: int = 15):
     """
-    每 interval 秒拉一段音频并送入 YAMNet 处理。
+    每 interval 秒拉一段音频并送入处理。
     """
     while True:
-        audio_path = extract_audio_from_rtmp(rtmp_url, duration=5)
+        audio_path = extract_audio_from_rtmp(rtmp_url, duration=3)
         if audio_path and os.path.exists(audio_path):
             results = handle_audio_file(audio_path)
             os.unlink(audio_path)
