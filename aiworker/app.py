@@ -73,13 +73,25 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
     stream_lock = video_streams_cache[cache_key]['lock']
     camera_id_int = int(camera_id)
 
+    CAMERA_CONFIGS = {
+        "1": ["fall_detection", "intrusion_detection"],
+        "6": ["fall_detection", "fight_detection"],
+        "default": ["fall_detection", "intrusion_detection", "fight_detection"]  # 默认配置
+    }
+    active_detectors_for_cam = CAMERA_CONFIGS.get(camera_id, CAMERA_CONFIGS["default"])
+
     rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
     cap = cv2.VideoCapture(rtmp_url)
 
     processor_instance = None
     if ai_function_name == 'abnormal_detection':
         fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
-        processor_instance = AbnormalBehaviorProcessor(camera_id_int, yolo_detector, fps)
+        processor_instance = AbnormalBehaviorProcessor(
+            camera_id_int,
+            yolo_detector,
+            fps,
+            enabled_detectors=active_detectors_for_cam
+        )
 
     if not cap.isOpened():
         app.logger.error(f"Cannot open stream: {rtmp_url}")
