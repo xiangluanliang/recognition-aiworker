@@ -25,7 +25,7 @@ from aiworker.yolo.yolo_detector import YoloDetector
 
 
 # 导入音频模块
-from aiworker.audio.event_handlers import handle_audio_file
+# from aiworker.audio.event_handlers import handle_audio_file
 # from aiworker.report.report_generator import process_report_generation
 
 # --- Flask App 初始化 ---
@@ -43,32 +43,32 @@ yolo_detector = YoloDetector(YOLO_POSE_MODEL_FILENAME)
 video_streams_cache = {}
 AI_FUNCTIONS = ['abnormal_detection']
 
-def audio_detect_thread(rtmp_url_inner, camera_id_inner, processor):
-    while True:
-        audio_path = None  # 初始化
-        try:
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-                audio_path = tmp_audio.name
-
-            command = [
-                "ffmpeg", "-y", "-i", rtmp_url_inner,
-                "-t", "5",
-                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                audio_path
-            ]
-            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            # 用 handle_audio_file 时，传入 processor 实例 ---
-            handle_audio_file(audio_path, processor)
-
-        except Exception as e:
-            app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
-
-        finally:
-            if audio_path and os.path.exists(audio_path):
-                os.remove(audio_path)
-
-        time.sleep(10)
+# def audio_detect_thread(rtmp_url_inner, camera_id_inner, processor):
+#     while True:
+#         audio_path = None  # 初始化
+#         try:
+#             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+#                 audio_path = tmp_audio.name
+#
+#             command = [
+#                 "ffmpeg", "-y", "-i", rtmp_url_inner,
+#                 "-t", "5",
+#                 "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+#                 audio_path
+#             ]
+#             subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+#
+#             # 用 handle_audio_file 时，传入 processor 实例 ---
+#             handle_audio_file(audio_path, processor)
+#
+#         except Exception as e:
+#             app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
+#
+#         finally:
+#             if audio_path and os.path.exists(audio_path):
+#                 os.remove(audio_path)
+#
+#         time.sleep(10)
 
 
 def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
@@ -86,16 +86,17 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
 
     if not cap.isOpened():
         app.logger.error(f"Cannot open stream: {rtmp_url}")
+        return 
         # 即使视频流打开失败，我们依然可以尝试启动音频检测
-        if processor_instance:
-            audio_thread = threading.Thread(
-                target=audio_detect_thread,
-                args=(rtmp_url, camera_id, processor_instance),
-                daemon=True
-            )
-            audio_thread.start()
-        if not cap.isOpened():
-            return
+        # if processor_instance:
+        #     audio_thread = threading.Thread(
+        #         target=audio_detect_thread,
+        #         args=(rtmp_url, camera_id, processor_instance),
+        #         daemon=True
+        #     )
+        #     audio_thread.start()
+        # if not cap.isOpened():
+        #     return
 
     app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
 
