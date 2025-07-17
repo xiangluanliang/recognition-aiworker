@@ -160,37 +160,53 @@ def _min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=3):
 
 def check_intrusion(pid, bbox, center, zone_list, recorded_intrusions, status_cache, frame_idx):
     """
-    检查单个 person 是否侵入了任何一个警戒区域。
-    现在从 zone_list 中的每个字典获取独立的配置。
+    重构后的入侵检测逻辑，引入了“宽容期”以应对检测波动。
     """
     newly_detected_zones = []
-    is_currently_intruding = False
+    is_currently_intruding_any_zone = False
 
-    # 遍历处理好的区域列表
     for zone_info in zone_list:
         zone_id = zone_info['id']
         polygon = zone_info['polygon']
         safe_dist = zone_info['safe_dist']
         stay_frames = zone_info['stay_frames']
-
-        min_dist = _min_distance_bbox_to_polygon(bbox, polygon)
         cache_key = f"{pid}_{zone_id}"
 
-        if _point_in_polygon(center, polygon) or min_dist < safe_dist:
-            is_currently_intruding = True
+        is_inside_zone = _point_in_polygon(center, polygon) or _min_distance_bbox_to_polygon(bbox, polygon) < safe_dist
+
+        if is_inside_zone:
+            is_currently_intruding_any_zone = True
+
+            # 如果这个人是第一次进入这个区域
             if cache_key not in status_cache:
-                status_cache[cache_key] = frame_idx
+                # 初始化计时器和状态
+                status_cache[cache_key] = {
+                    'start_frame': frame_idx,
+                    'last_seen_frame': frame_idx
+                }
+            else:
+                # 如果不是第一次，只更新“最后见到”的帧
+                status_cache[cache_key]['last_seen_frame'] = frame_idx
 
-            stay_duration = frame_idx - status_cache[cache_key]
+            # 计算总的滞留时长
+            stay_duration = frame_idx - status_cache[cache_key]['start_frame']
 
+            # 判断是否达到报警条件
             if stay_duration >= stay_frames:
+                # 如果这个事件还没有被记录过
                 if (pid, zone_id) not in recorded_intrusions:
                     recorded_intrusions.add((pid, zone_id))
                     newly_detected_zones.append(zone_info)
         else:
-            status_cache.pop(cache_key, None)
+            # 如果人不在区域内，检查是否超过了“宽容期”
+            if cache_key in status_cache:
+                frames_since_last_seen = frame_idx - status_cache[cache_key]['last_seen_frame']
 
-    return is_currently_intruding, newly_detected_zones
+                # 只有当人离开区域超过宽容期后，才真正重置计时器
+                if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
+                    status_cache.pop(cache_key, None)
+
+    return is_currently_intruding_any_zone, newly_detected_zones
 
 
 # --- Fight Detection Logic ---

@@ -80,6 +80,7 @@ FALL_HIGHLIGHT_DURATION_FRAMES = 2 * 30 # 假设帧率为30fps
 # Intrusion Detection (默认值，实际会从API获取)
 DEFAULT_STAY_SECONDS = 5
 DEFAULT_SAFE_DISTANCE = 50.0
+INTRUSION_GRACE_PERIOD_FRAMES = 30
 
 # Fight Detection
 FIGHT_DISTANCE_THRESHOLD = 180           # 人体之间距离阈值（像素）
