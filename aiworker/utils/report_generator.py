@@ -113,11 +113,21 @@ def process_report_generation(summary_data: dict) -> str:
     # 生成表格（事件类型分布）
     table_content = ""
     if event_stats:
-        table_data = [[event_type, count] for event_type, count in event_stats.items()]
+        table_data = [
+            [
+                event_type,
+                data["count"],
+                data["unprocessed"],
+                data["processing"],
+                data["processed"],
+                data["cameras"],
+            ]
+            for event_type, data in event_stats.items()
+        ]
         table_content = tabulate(
             table_data,
-            headers=["事件类型", "发生次数"],
-            tablefmt="grid",
+            headers=["事件类型", "发生次数", "未处理数", "处理中数", "已处理数", "涉及摄像头数"],
+            tablefmt="html",
             stralign="center",
             numalign="center"
         )
