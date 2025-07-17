@@ -7,6 +7,8 @@ import numpy as np
 import threading
 import logging
 import time
+
+import requests
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from flask_sock import Sock
@@ -250,6 +252,37 @@ def liveness_check_websocket(ws):
         app.logger.error(f"Error in liveness WebSocket: {e}", exc_info=True)
     finally:
         app.logger.info("WebSocket client disconnected.")
+
+
+def fetch_summary_for_report():
+    """从Django后端获取日报所需的数据摘要。"""
+    # 这个函数现在只负责调用API
+    api_url = f"{DJANGO_API_BASE_URL}daily-report/today"
+    headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
+    app.logger.info(f"ReportGen: Fetching data from {api_url}")
+    response = requests.get(api_url, headers=headers, timeout=20, verify=False)
+    response.raise_for_status()
+    return response.json()
+@app.route('/ai/generate-report', methods=['POST'])
+def generate_report_endpoint():
+    """
+    API端点，调用独立的AI模块来生成日报。
+    """
+    app.logger.info("Received request to generate daily report.")
+    try:
+        # 1. 从Django获取数据
+        summary_data = fetch_summary_for_report()
+
+        report_content = "模块升级中"
+        # report_content = process_report_generation(summary_data)
+        return jsonify({
+            "status": "success",
+            "message": "Daily report generated and submitted successfully.",
+            "content": report_content
+        }), 200
+    except Exception as e:
+        app.logger.error(f"Failed to execute report generation task: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # --- 服务启动 ---
