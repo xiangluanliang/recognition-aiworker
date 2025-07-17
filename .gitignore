@@ -33,6 +33,7 @@ yolo_cache/
 *.bin
 *.xml
 *.cache
+*.pth
 
 # ========================================
 # Jupyter Notebook
