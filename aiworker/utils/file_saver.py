@@ -25,14 +25,14 @@ def save_clip(person_id, frame_idx, video_buffer, fps, sub_dir='clips', event_ty
 
     # --- 路径和文件名设置 ---
     base_dir = os.path.join(MEDIA_ROOT, sub_dir)
-    os.makedirs(base_dir, exist_ok=True)
+    os.makedirs(sub_dir, exist_ok=True)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_filename = f"{event_type}_pid{person_id}_frame{frame_idx}_{timestamp}"
 
     # 定义临时文件和最终文件的路径
     temp_path = os.path.join(base_dir, f"{base_filename}_temp.mp4")
-    final_path = os.path.join(base_dir, f"{base_filename}.mp4")
+    final_path = os.path.join(sub_dir, f"{base_filename}.mp4")
 
     # --- 步骤 2: 使用 OpenCV 快速保存一个临时的、未优化的视频文件 ---
     try:
