@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 import threading
 import logging
+import subprocess
+import tempfile
 import time
 
 import requests
@@ -41,6 +43,34 @@ yolo_detector = YoloDetector(YOLO_POSE_MODEL_FILENAME)
 video_streams_cache = {}
 AI_FUNCTIONS = ['abnormal_detection']
 
+def audio_detect_thread(rtmp_url_inner, camera_id_inner, processor):
+    while True:
+        audio_path = None  # 初始化
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+                audio_path = tmp_audio.name
+
+            command = [
+                "ffmpeg", "-y", "-i", rtmp_url_inner,
+                "-t", "5",
+                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                audio_path
+            ]
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # 用 handle_audio_file 时，传入 processor 实例 ---
+            handle_audio_file(audio_path, processor)
+
+        except Exception as e:
+            app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
+
+        finally:
+            if audio_path and os.path.exists(audio_path):
+                os.remove(audio_path)
+
+        time.sleep(10)
+
+
 def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
     cache_key = (stream_id, ai_function_name, camera_id)
     stream_lock = video_streams_cache[cache_key]['lock']
@@ -48,62 +78,42 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
 
     rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
     cap = cv2.VideoCapture(rtmp_url)
-    if not cap.isOpened():
-        app.logger.error(f"Cannot open stream: {rtmp_url}")
 
-        # 启动音频检测线程，循环拉取音频并处理
-        def audio_detect_thread(rtmp_url_inner, camera_id_inner):
-            import subprocess
-            import tempfile
-            import os
-            import time
-
-            while True:
-                try:
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
-                        audio_path = tmp_audio.name
-
-                    command = [
-                        "ffmpeg", "-y", "-i", rtmp_url_inner,
-                        "-t", "5",  # 截取5秒音频
-                        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                        audio_path
-                    ]
-                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-                    # 调用你写好的音频处理函数
-                    handle_audio_file(audio_path)
-
-                except Exception as e:
-                    app.logger.error(f"[AudioThread-{camera_id_inner}] 音频处理失败: {e}")
-
-                finally:
-                    if os.path.exists(audio_path):
-                        os.remove(audio_path)
-
-                time.sleep(10)  # 每10秒处理一次
-
-        threading.Thread(target=audio_detect_thread, args=(rtmp_url, camera_id), daemon=True).start()
-        return
-
-    app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
-
-    # --- 为需要状态的AI功能初始化对应的处理器实例 ---
     processor_instance = None
     if ai_function_name == 'abnormal_detection':
         fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
         processor_instance = AbnormalBehaviorProcessor(camera_id_int, yolo_detector, fps)
+
+    if not cap.isOpened():
+        app.logger.error(f"Cannot open stream: {rtmp_url}")
+        # 即使视频流打开失败，我们依然可以尝试启动音频检测
+        if processor_instance:
+            audio_thread = threading.Thread(
+                target=audio_detect_thread,
+                args=(rtmp_url, camera_id, processor_instance),
+                daemon=True
+            )
+            audio_thread.start()
+        if not cap.isOpened():
+            return
+
+    app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
 
     frame_count = 0
     while cache_key in video_streams_cache:
         success, frame = cap.read()
         if not success:
             time.sleep(0.1)
+            # 如果视频流断开，我们可以尝试重连
+            cap.release()
+            cap = cv2.VideoCapture(rtmp_url)
+            app.logger.warning(f"Stream {stream_id} disconnected. Attempting to reconnect...")
             continue
 
+        # 视频帧的处理逻辑保持不变
+        processor_instance.video_buffer.append(frame.copy())  # 确保视频缓冲区持续更新
         frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
 
-        # --- 跳帧逻辑 ---
         if frame_count % FRAME_SKIP_RATE != 0:
             frame_count += 1
             continue
@@ -112,7 +122,6 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
         if ai_function_name == 'abnormal_detection' and processor_instance:
             processed_frame, _ = processor_instance.process_frame(frame)
 
-        # 将处理后的帧放入缓存
         ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ret:
             with stream_lock:
@@ -123,7 +132,6 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
     cap.release()
     video_streams_cache.pop(cache_key, None)
     app.logger.info(f"Thread stopped for {cache_key}")
-
 @app.route('/<ai_function_name>/<stream_id>/<camera_id>')
 def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
     if ai_function_name not in AI_FUNCTIONS:
