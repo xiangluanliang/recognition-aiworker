@@ -1,4 +1,5 @@
 # aiworker/face/face_handler.py
+from datetime import timezone, datetime
 import cv2
 import base64
 import numpy as np
@@ -6,7 +7,64 @@ from .vision_service import VisionServiceWorker
 from aiworker.config import (
     RECOMMENDED_FACE_RECT_RATIO, RECOMMENDED_FACE_MIN_PIXELS, BLINK_TIMEOUT_FRAMES
 )
+from ..services.api_client import log_event
+from ..utils.file_saver import save_event_image
 
+EVENT_LOG_COOLDOWN_CACHE = {}
+EVENT_COOLDOWN_SECONDS = 60
+
+
+def _log_face_event_with_cooldown(event_type, person_data, frame):
+    """
+    一个带有冷却功能的辅助函数，用于上报人脸相关事件。
+    它会保存证据图片，并确保同一事件在短时间内不重复上报。
+    """
+    # 使用会话的某个通用标识符作为冷却key的一部分，这里用一个简单的字符串
+    # 更复杂的场景可以用 session_id 或其他唯一标识
+    session_identifier = "liveness_check_session"
+    cache_key = (event_type, session_identifier)
+
+    current_time = time.time()
+    last_log_time = EVENT_LOG_COOLDOWN_CACHE.get(cache_key, 0)
+
+    # 检查是否仍在冷却时间内
+    if current_time - last_log_time < EVENT_COOLDOWN_SECONDS:
+        return  # 在冷却期内，不执行任何操作
+
+    # --- 冷却期已过，执行事件上报 ---
+
+    # 1. 保存证据图片
+    # 使用 event_type 和时间戳创建唯一文件名
+    image_path = save_event_image(
+        frame, person_data.get('person_id', 'unknown'), int(current_time),
+        sub_dir=f'{event_type}_images',
+        event_type=event_type
+    )
+
+    # 2. 准备上报给Django的数据
+    event_data = {
+        'time': datetime.now(timezone.utc).isoformat(),
+        'camera': None,  # Websocket接口没有实体摄像头ID，可以设为None
+        'event_type': event_type,
+        'confidence': person_data.get('confidence', 0.9),  # 使用人脸检测的置信度
+        'image_path': image_path,
+        'video_clip_path': None,
+        'detection_details': {
+            'message': f"Liveness check session event: {event_type}",
+            'identity': person_data.get('identity', 'Unknown'),
+            'box_coords': person_data.get('box_coords'),
+            'liveness_info': person_data.get('liveness_info')
+        }
+    }
+
+    # 3. 调用API上报事件
+    try:
+        log_event(event_data)
+        # 4. 更新缓存，重置冷却计时器
+        EVENT_LOG_COOLDOWN_CACHE[cache_key] = current_time
+        print(f"成功上报事件: {event_type}")
+    except Exception as e:
+        print(f"上报事件失败: {e}")
 
 def process_frame_for_stream(vision_worker: VisionServiceWorker, frame: np.ndarray, known_faces_data: list,
                              camera_id: int, perform_heavy_ai: bool):
@@ -28,17 +86,20 @@ def process_frame_for_stream(vision_worker: VisionServiceWorker, frame: np.ndarr
 
     # 2. 昂贵的AI计算 (跳帧执行)
     if perform_heavy_ai and detected_faces:
-        liveness_status, liveness_details = vision_worker.liveness_detector.perform_liveness_check(
+        liveness_results = vision_worker.liveness_detector.perform_liveness_check(
             frame, detected_faces, require_blink=False
         )
+        # 注意: perform_liveness_check 返回的是一个列表
+        liveness_status = all(item['combined_live_status'] for item in liveness_results)
+
         detection_data['liveness_passed'] = liveness_status
-        detection_data['liveness_details_per_face'] = liveness_details
+        detection_data['liveness_details_per_face'] = liveness_results
 
         recognized_identities = vision_worker.recognize_faces(frame, detected_faces, known_faces_data)
 
         # 合并结果并记录事件
         for person in recognized_identities:
-            matched_liveness = next((ld for ld in liveness_details if ld['box_coords'] == person['box_coords']), None)
+            matched_liveness = next((ld for ld in liveness_results if ld['box_coords'] == person['box_coords']), None)
             if matched_liveness:
                 person['liveness_info'] = matched_liveness
                 if not matched_liveness['combined_live_status']:
@@ -62,7 +123,6 @@ def process_frame_for_stream(vision_worker: VisionServiceWorker, frame: np.ndarr
                     detection_data['events_to_log'].append(event_to_log)
             detection_data['persons'].append(person)
 
-    # 3. UI绘制 (每帧都做，保证流畅)
     _draw_guidance_and_results(processed_frame, detected_faces, detection_data['persons'], vision_worker)
 
     return processed_frame, detection_data
@@ -102,6 +162,14 @@ def process_frame_for_api(vision_worker: VisionServiceWorker, frame: np.ndarray,
     liveness_status = bool(persons_data) and all(
         p.get('liveness_info', {}).get('combined_live_status', False) for p in persons_data
     )
+    if persons_data:
+        main_person = persons_data[0]
+        if main_person.get('identity') == 'Stranger':
+            _log_face_event_with_cooldown('stranger_detected', main_person, frame)
+        if not main_person.get('liveness_info', {}).get('combined_live_status', True):
+            _log_face_event_with_cooldown('liveness_fraud', main_person, frame)
+
+
     processed_image_b64 = None
     if liveness_status:
         processed_image = frame.copy()
