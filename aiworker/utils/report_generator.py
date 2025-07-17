@@ -134,6 +134,7 @@ def process_report_generation(summary_data: dict) -> str:
     else:
         table_content = "无事件记录"
 
+    logger.info(f"ahahaha准备开始生成咯")
     # 生成 AI 文本
     report_content = report_service_instance.generate_text(messages)
     logger.info(f"从AI生成的文本: '{report_content}'")
