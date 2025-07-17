@@ -167,7 +167,7 @@ def process_frame_for_api(vision_worker: VisionServiceWorker, frame: np.ndarray,
         main_person = persons_data[0]
         if main_person.get('identity') == 'Stranger':
             _log_face_event_with_cooldown('stranger_detected', main_person, frame)
-        if not main_person.get('liveness_info', {}).get('combined_live_status', True):
+        elif not main_person.get('liveness_info', {}).get('combined_live_status', True):
             _log_face_event_with_cooldown('liveness_fraud', main_person, frame)
 
 
