@@ -102,36 +102,44 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
 
     frame_count = 0
     while cache_key in video_streams_cache:
+        app.logger.info(f"循环开始，准备读取第 {frame_count + 1} 帧...")
         success, frame = cap.read()
         if not success:
+            app.logger.warning(f"读取第 {frame_count + 1} 帧失败，尝试重连...")
             time.sleep(0.1)
             cap.release()
             cap = cv2.VideoCapture(rtmp_url)
             app.logger.warning(f"Stream {stream_id} disconnected. Attempting to reconnect...")
             continue
 
+        app.logger.info(f"成功读取第 {frame_count + 1} 帧。")
         frame_count += 1
 
-        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+        if processor_instance and hasattr(processor_instance, 'video_buffer'):
+            processor_instance.video_buffer.append(frame.copy())
 
         if frame_count % FRAME_SKIP_RATE != 0:
             continue
 
-        # --- 帧处理逻辑 ---
-        processed_frame = frame
-        if ai_function_name == 'abnormal_detection' and processor_instance:
-            if hasattr(processor_instance, 'video_buffer'):
-                processor_instance.video_buffer.append(frame.copy())
-            processed_frame, _ = processor_instance.process_frame(frame)
+        app.logger.info(f"--- 开始处理第 {frame_count} 帧 ---")
 
+        resized_frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+        processed_frame = resized_frame
+        if ai_function_name == 'abnormal_detection' and processor_instance:
+            processed_frame, _ = processor_instance.process_frame(resized_frame)
+
+        app.logger.info(f"--- 第 {frame_count} 帧处理完成，准备编码并更新缓存 ---")
         ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
         if ret:
             with stream_lock:
                 video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
+        app.logger.info(f"--- 缓存更新完毕 ---")
 
+    if processor_instance:
+        processor_instance.is_active = False
     cap.release()
     video_streams_cache.pop(cache_key, None)
-    app.logger.info(f"Thread stopped for {cache_key}")
+    app.logger.info(f"主处理线程已为 {cache_key} 停止。")
 @app.route('/<ai_function_name>/<stream_id>/<camera_id>')
 def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
     if ai_function_name not in AI_FUNCTIONS:
