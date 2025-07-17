@@ -304,7 +304,7 @@ def liveness_check_websocket(ws):
 def fetch_summary_for_report():
     """从Django后端获取日报所需的数据摘要。"""
     # 这个函数现在只负责调用API
-    api_url = f"{DJANGO_API_BASE_URL}daily-report/"
+    api_url = f"{DJANGO_API_BASE_URL}daily-report/data/"
     headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
     app.logger.info(f"ReportGen: Fetching data from {api_url}")
     response = requests.get(api_url, headers=headers, timeout=20, verify=False)
