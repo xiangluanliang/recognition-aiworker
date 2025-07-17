@@ -40,6 +40,9 @@ class AbnormalBehaviorProcessor:
         self.recorded_intrusions = set()
         self.recorded_conflicts = set()
         self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))
+        self.center_histories = defaultdict(lambda: deque(maxlen=5))
+        self.person_last_seen = {}
+        self.recent_falls = {}
         self.person_last_seen = {}
         self.recent_falls = {}
 
@@ -98,6 +101,9 @@ class AbnormalBehaviorProcessor:
         for pid in current_pids:
             self.person_last_seen[pid] = self.frame_idx
 
+        for i, pid in enumerate(ids):
+            self.center_histories[pid].append(centers[i])
+
         all_event_pids = set()
 
         if 'fight_detection' in self.active_detectors:
@@ -105,16 +111,21 @@ class AbnormalBehaviorProcessor:
                 self.fight_kpts_history[pid].append(kpts_list[i].copy())
 
             conflict_pairs = detect_fight(
-                ids, centers, self.fight_kpts_history,
-                FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD
+                ids, centers, self.fight_kpts_history, self.center_histories,
+                dist_thresh=FIGHT_DISTANCE_THRESHOLD,
+                motion_thresh=FIGHT_MOTION_THRESHOLD,
+                orient_thresh=FIGHT_ORIENTATION_SIMILARITY_THRESHOLD,
+                speed_thresh=FIGHT_SPEED_THRESHOLD,
+                accel_thresh=FIGHT_ACCELERATION_THRESHOLD,
+                kpts_change_thresh=FIGHT_KPTS_CHANGE_THRESHOLD
             )
-            for pid1, pid2 in conflict_pairs:
+            for pid1, pid2, fight_score in conflict_pairs:
                 for pid in [pid1, pid2]:
                     all_event_pids.add(pid)
                     if (pid, int(time.time()) // 10) not in self.recorded_conflicts:
-                        self.logger.error(f"检测到打架行为。")
+                        self.logger.error(f"检测到打架行为，评分为: {fight_score}")
                         self.recorded_conflicts.add((pid, int(time.time()) // 10))
-                        self._log_event('conflict', pid, 0.99, frame)
+                        self._log_event('conflict', pid, fight_score, frame)
 
         for i, (pid, kpts) in enumerate(zip(ids, kpts_list)):
             x1, y1 = np.min(kpts[:, 0]), np.min(kpts[:, 1])

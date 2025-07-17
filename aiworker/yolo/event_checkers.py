@@ -2,7 +2,7 @@
 import numpy as np
 from matplotlib.path import Path
 
-from aiworker.config import FRAME_SKIP_RATE
+from aiworker.config import FRAME_SKIP_RATE, INTRUSION_GRACE_PERIOD_FRAMES
 
 
 # --- Fall Detection Logic ---
@@ -80,34 +80,30 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
         status['cooldown_counter'] -= 1
         return True, False, 0.9
 
-    score_thresh = 0.45  # 总分超过45
-    extreme_wh_ratio = 1.2  # 宽高比超过1.2
-    is_fall = angle < angle_thresh or total_score >= score_thresh  or (height_change > 0.3) or wh_ratio > extreme_wh_ratio
+    is_posture_fallen = angle < angle_thresh
+    is_shape_or_motion_abnormal = (wh_ratio > 1.2) or (height_change > 0.3)
+
+    is_fall = is_posture_fallen and is_shape_or_motion_abnormal
 
     if is_fall:
-        # status['fall_frame_count'] += 1
         status['fall_time'] += (frame_interval / fps)
-
-        # if status['fall_frame_count'] >= 0.2:
         if status['fall_time'] >= 0.2:
             if not status.get('is_falling', False):
                 status['is_falling'] = True
                 status['cooldown_counter'] = cooldown_frames
-                return True, True ,total_score # 是摔倒 + 是新事件
-            return True, False ,total_score # 是摔倒，但已记录
+                return True, True, total_score
+            return True, False, total_score
     else:
-        # 只有在所有摔倒迹象都消失时，才重置计数器
         status['fall_frame_count'] = 0
         status['is_falling'] = False
 
-    # --- 确认事件和冷却逻辑 (保持不变) ---
     if status['fall_frame_count'] >= window_size:
         if not status['is_falling']:
             status['is_falling'] = True
             status['cooldown_counter'] = cooldown_frames
-            score = 0.95 if is_sudden_drop else 0.85
-            return True, True, score  # 是摔倒 + 是新事件
-        return True, False, 0.8  # 是摔倒，但已上报
+            score = 0.95
+            return True, True, score
+        return True, False, 0.8
 
     return False, False, 0.1
 
@@ -164,37 +160,53 @@ def _min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=3):
 
 def check_intrusion(pid, bbox, center, zone_list, recorded_intrusions, status_cache, frame_idx):
     """
-    检查单个 person 是否侵入了任何一个警戒区域。
-    现在从 zone_list 中的每个字典获取独立的配置。
+    重构后的入侵检测逻辑，引入了“宽容期”以应对检测波动。
     """
     newly_detected_zones = []
-    is_currently_intruding = False
+    is_currently_intruding_any_zone = False
 
-    # 遍历处理好的区域列表
     for zone_info in zone_list:
         zone_id = zone_info['id']
         polygon = zone_info['polygon']
         safe_dist = zone_info['safe_dist']
         stay_frames = zone_info['stay_frames']
-
-        min_dist = _min_distance_bbox_to_polygon(bbox, polygon)
         cache_key = f"{pid}_{zone_id}"
 
-        if _point_in_polygon(center, polygon) or min_dist < safe_dist:
-            is_currently_intruding = True
+        is_inside_zone = _point_in_polygon(center, polygon) or _min_distance_bbox_to_polygon(bbox, polygon) < safe_dist
+
+        if is_inside_zone:
+            is_currently_intruding_any_zone = True
+
+            # 如果这个人是第一次进入这个区域
             if cache_key not in status_cache:
-                status_cache[cache_key] = frame_idx
+                # 初始化计时器和状态
+                status_cache[cache_key] = {
+                    'start_frame': frame_idx,
+                    'last_seen_frame': frame_idx
+                }
+            else:
+                # 如果不是第一次，只更新“最后见到”的帧
+                status_cache[cache_key]['last_seen_frame'] = frame_idx
 
-            stay_duration = frame_idx - status_cache[cache_key]
+            # 计算总的滞留时长
+            stay_duration = frame_idx - status_cache[cache_key]['start_frame']
 
+            # 判断是否达到报警条件
             if stay_duration >= stay_frames:
+                # 如果这个事件还没有被记录过
                 if (pid, zone_id) not in recorded_intrusions:
                     recorded_intrusions.add((pid, zone_id))
                     newly_detected_zones.append(zone_info)
         else:
-            status_cache.pop(cache_key, None)
+            # 如果人不在区域内，检查是否超过了“宽容期”
+            if cache_key in status_cache:
+                frames_since_last_seen = frame_idx - status_cache[cache_key]['last_seen_frame']
 
-    return is_currently_intruding, newly_detected_zones
+                # 只有当人离开区域超过宽容期后，才真正重置计时器
+                if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
+                    status_cache.pop(cache_key, None)
+
+    return is_currently_intruding_any_zone, newly_detected_zones
 
 
 # --- Fight Detection Logic ---
@@ -244,12 +256,15 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             pid1, pid2 = ids[i], ids[j]
+            center1, center2 = np.array(centers[i]), np.array(centers[j])
 
             # 1. 距离判断
             dist = np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
-            if dist >= dist_thresh:
-                continue
             dist_score = max(0.0, 1.0 - dist / dist_thresh)
+
+            # 跳过太远的人
+            if dist_score <= 0:
+                continue
 
             # 2. 判断关键点历史是否足够
             if len(fight_kpts_history[pid1]) < 5 or len(fight_kpts_history[pid2]) < 5:
@@ -258,37 +273,27 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
             # 3. 速度和加速度
             speed1 = calc_center_velocity(center_histories[pid1])
             speed2 = calc_center_velocity(center_histories[pid2])
+            speed_score = min((speed1 + speed2) / 2 / speed_thresh, 1.0)
+
             accel1 = calc_center_acceleration(center_histories[pid1])
             accel2 = calc_center_acceleration(center_histories[pid2])
-            if speed1 < speed_thresh and speed2 < speed_thresh:
-                continue
-            if accel1 < accel_thresh and accel2 < accel_thresh:
-                continue
-            speed_score = min((speed1 + speed2) / 2 / speed_thresh, 1.0)
             accel_score = min((accel1 + accel2) / 2 / accel_thresh, 1.0)
 
             # 4. 关键点变化
             kpts_change1 = calc_kpts_change(fight_kpts_history[pid1])
             kpts_change2 = calc_kpts_change(fight_kpts_history[pid2])
-            if kpts_change1 < kpts_change_thresh and kpts_change2 < kpts_change_thresh:
-                continue
             kpts_change_score = min((kpts_change1 + kpts_change2) / 2 / kpts_change_thresh, 1.0)
-
 
             # 5. 上半身运动判断
             motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
             motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
-            if motion1 < motion_thresh or motion2 < motion_thresh:
-                continue
             motion_score = min((motion1 + motion2) / 2 / motion_thresh, 1.0)
 
             # 6. 朝向判断
             vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
             vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
-            dot = np.dot(vec1, vec2)
-            if dot >= -orient_thresh:
-                continue
-            face_score = min(1.0, (abs(dot) - orient_thresh) / (1.0 - orient_thresh))
+            orientation_dot = np.dot(vec1, vec2)
+            face_score = min(1.0, (abs(orientation_dot) - orient_thresh) / (1.0 - orient_thresh)) if orientation_dot < -orient_thresh else 0.0
 
             # 5. 综合评分
             fight_score = round(
@@ -301,8 +306,20 @@ def detect_fight(ids, centers, fight_kpts_history, center_histories,
                 3
             )
 
+            # 统计满足的强打架特征个数
+            strong_signs = 0
+            if motion_score > 0.5:  # 上半身剧烈运动
+                strong_signs += 1
+            if face_score > 0.5:  # 面对面朝向
+                strong_signs += 1
+            if speed_score > 0.5:  # 移动速度较快
+                strong_signs += 1
+            if kpts_change_score > 0.5:  # 关键点剧烈变化
+                strong_signs += 1
+
             # 6. 最终加入结果
-            conflicts.append((pid1, pid2, fight_score))
+            if fight_score >= 0.5 and strong_signs >= 2:
+                conflicts.append((pid1, pid2, fight_score))
 
     return conflicts
 

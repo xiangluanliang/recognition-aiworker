@@ -52,21 +52,4 @@ class YoloDetector:
 
         return kpts_list, centers, confidences
 
-    def detect_fight(self, frame: np.ndarray, conf_threshold: float = 0.5) -> list[int]:
-        """
-        使用打架检测模型在帧中检测打架目标。
-        返回所有检测到的目标 ID 列表（目前我们假设每个目标就是一个打架人）。
-        """
-        if self.model is None:
-            self.logger.warning("YOLO model not loaded, cannot perform fight detection.")
-            return []
-
-        results = self.model(frame, verbose=False)[0]
-        fight_ids = []
-
-        for box in results.boxes:
-            if box.conf is not None and float(box.conf) > conf_threshold:
-                fight_ids.append(int(box.id) if box.id is not None else 0)  # 用类别或编号代替ID
-
-        return fight_ids
 
