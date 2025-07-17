@@ -165,17 +165,41 @@ def check_intrusion(pid, bbox, center, camera_id, warning_zones, recorded_intrus
 
 
 # --- Fight Detection Logic ---
+# 速度计算
+def calc_center_velocity(center_history):
+    if len(center_history) < 2:
+        return 0
+    return np.linalg.norm(center_history[-1] - center_history[-2])
+# 加速度计算
+def calc_center_acceleration(center_history):
+    if len(center_history) < 3:
+        return 0
+    v1 = center_history[-1] - center_history[-2]
+    v0 = center_history[-2] - center_history[-3]
+    return np.linalg.norm(v1 - v0)
+# 关键点变化测试
+def calc_kpts_change(kpts_deque):
+    if len(kpts_deque) < 2:
+        return 0
+    arr = np.array(kpts_deque)
+    diffs = np.linalg.norm(arr[1:] - arr[:-1], axis=2)  # 计算相邻帧关键点位移，shape=(len-1, num_keypoints)
+    mean_change = diffs.mean()
+    return mean_change
+
+# 计算上半身关键点变化幅度
 def _upper_body_motion_std(kpts_deque):
     upper_kpts_indices = [5, 6, 7, 8, 9, 10]
     upper_body = np.array(kpts_deque)[:, upper_kpts_indices, :]
     return np.std(upper_body, axis=0).mean()
-
+# 估计人物朝向的单位向量
 def _estimate_orientation(kpts):
     shoulder_mid = (kpts[5] + kpts[6]) / 2
     direction = kpts[0] - shoulder_mid
     return direction / (np.linalg.norm(direction) + 1e-5)
-
-def detect_fight(ids, centers, fight_kpts_history, dist_thresh, motion_thresh, orient_thresh):
+# 检测视频中人物是否打架可能
+def detect_fight(ids, centers, fight_kpts_history, center_histories,
+                 dist_thresh, motion_thresh, orient_thresh,
+                 speed_thresh, accel_thresh, kpts_change_thresh):
     conflicts = []
 
     for i in range(len(ids)):
@@ -192,14 +216,34 @@ def detect_fight(ids, centers, fight_kpts_history, dist_thresh, motion_thresh, o
             if len(fight_kpts_history[pid1]) < 5 or len(fight_kpts_history[pid2]) < 5:
                 continue
 
-            # 3. 上半身运动判断
+            # 3. 速度和加速度
+            speed1 = calc_center_velocity(center_histories[pid1])
+            speed2 = calc_center_velocity(center_histories[pid2])
+            accel1 = calc_center_acceleration(center_histories[pid1])
+            accel2 = calc_center_acceleration(center_histories[pid2])
+            if speed1 < speed_thresh and speed2 < speed_thresh:
+                continue
+            if accel1 < accel_thresh and accel2 < accel_thresh:
+                continue
+            speed_score = min((speed1 + speed2) / 2 / speed_thresh, 1.0)
+            accel_score = min((accel1 + accel2) / 2 / accel_thresh, 1.0)
+
+            # 4. 关键点变化
+            kpts_change1 = calc_kpts_change(fight_kpts_history[pid1])
+            kpts_change2 = calc_kpts_change(fight_kpts_history[pid2])
+            if kpts_change1 < kpts_change_thresh and kpts_change2 < kpts_change_thresh:
+                continue
+            kpts_change_score = min((kpts_change1 + kpts_change2) / 2 / kpts_change_thresh, 1.0)
+
+
+            # 5. 上半身运动判断
             motion1 = _upper_body_motion_std(fight_kpts_history[pid1])
             motion2 = _upper_body_motion_std(fight_kpts_history[pid2])
             if motion1 < motion_thresh or motion2 < motion_thresh:
                 continue
             motion_score = min((motion1 + motion2) / 2 / motion_thresh, 1.0)
 
-            # 4. 朝向判断
+            # 6. 朝向判断
             vec1 = _estimate_orientation(list(fight_kpts_history[pid1])[-1])
             vec2 = _estimate_orientation(list(fight_kpts_history[pid2])[-1])
             dot = np.dot(vec1, vec2)
@@ -208,10 +252,19 @@ def detect_fight(ids, centers, fight_kpts_history, dist_thresh, motion_thresh, o
             face_score = min(1.0, (abs(dot) - orient_thresh) / (1.0 - orient_thresh))
 
             # 5. 综合评分
-            fight_score = round(0.4 * motion_score + 0.3 * dist_score + 0.3 * face_score, 3)
+            fight_score = round(
+                0.25 * motion_score +
+                0.20 * dist_score +
+                0.20 * face_score +
+                0.15 * speed_score +
+                0.10 * accel_score +
+                0.10 * kpts_change_score,
+                3
+            )
 
             # 6. 最终加入结果
             conflicts.append((pid1, pid2, fight_score))
 
     return conflicts
+
 
