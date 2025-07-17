@@ -19,7 +19,6 @@ def save_clip(person_id, frame_idx, video_buffer, fps, sub_dir='clips', event_ty
         logger.warning("视频缓冲区为空，无法保存切片。")
         return None
 
-    # ✅ 步骤 1: 检查服务器上是否存在 ffmpeg 命令
     if not shutil.which('ffmpeg'):
         logger.error("未找到 ffmpeg 命令，无法进行视频转码。请在服务器上安装 ffmpeg。")
         return None
@@ -51,19 +50,17 @@ def save_clip(person_id, frame_idx, video_buffer, fps, sub_dir='clips', event_ty
         logger.error(f"使用OpenCV写入临时视频文件时失败: {e}", exc_info=True)
         return None
 
-    # --- 步骤 3: 调用 ffmpeg 对临时文件进行转码，生成最终的Web兼容文件 ---
     try:
         logger.info(f"开始转码视频文件到: {final_path}")
-        # 这就是您提供的、工作正常的ffmpeg命令
         ffmpeg_command = [
             'ffmpeg',
-            '-y',  # 覆盖输出文件
+            '-y',
             '-i', temp_path,
-            '-c:v', 'libx264',  # H.264视频编码
+            '-c:v', 'libx264',
             '-profile:v', 'high',
             '-level', '4.0',
             '-preset', 'fast',
-            '-c:a', 'aac',  # AAC音频编码
+            '-c:a', 'aac',
             '-b:a', '128k',
             final_path
         ]
@@ -82,8 +79,9 @@ def save_clip(person_id, frame_idx, video_buffer, fps, sub_dir='clips', event_ty
     finally:
         # --- 步骤 4: 无论成功与否，都删除临时文件 ---
         if os.path.exists(temp_path):
-            os.remove(temp_path)
-            logger.info(f"已删除临时视频文件: {temp_path}")
+            pass
+            # os.remove(temp_path)
+            # logger.info(f"已删除临时视频文件: {temp_path}")
 
 def save_event_image(frame, person_id, frame_idx, sub_dir='images', event_type='event'):
     """保存事件的单帧截图。"""

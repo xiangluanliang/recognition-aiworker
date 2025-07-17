@@ -131,6 +131,8 @@ def capture_and_process_thread(ai_function_name: str, camera_id: str):
     frame_count = 0
     while cache_key in video_streams_cache:
         app.logger.info(f"循环开始，准备读取第 {frame_count + 1} 帧...")
+        for _ in range(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1):
+            cap.grab()
         success, frame = cap.read()
         if not success:
             app.logger.warning(f"读取第 {frame_count + 1} 帧失败，尝试重连...")
