@@ -176,9 +176,12 @@ def calc_center_velocity(center_history):
 def calc_center_acceleration(center_history):
     if len(center_history) < 3:
         return 0
-    v1 = center_history[-1] - center_history[-2]
-    v0 = center_history[-2] - center_history[-3]
-    return np.linalg.norm(v1 - v0)
+    p1 = np.array(center_history[-1])
+    p2 = np.array(center_history[-2])
+    p3 = np.array(center_history[-3])
+    v1 = p1 - p2
+    v2 = p2 - p3
+    return np.linalg.norm(v1 - v2)
 # 关键点变化测试
 def calc_kpts_change(kpts_deque):
     if len(kpts_deque) < 2:
