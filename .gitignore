@@ -72,4 +72,4 @@ checkpoints/
 tensorboard/
 wandb/
 *.ckpt
-
+dnn_models/
