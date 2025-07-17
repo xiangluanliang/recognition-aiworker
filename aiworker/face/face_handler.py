@@ -45,7 +45,7 @@ def _log_face_event_with_cooldown(event_type, person_data, frame):
     # 2. 准备上报给Django的数据
     event_data = {
         'time': datetime.now(timezone.utc).isoformat(),
-        'camera': None,  # Websocket接口没有实体摄像头ID，可以设为None
+        'camera': 8,
         'event_type': event_type,
         'confidence': person_data.get('confidence', 0.9),  # 使用人脸检测的置信度
         'image_path': image_path,
