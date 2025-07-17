@@ -3,6 +3,8 @@ import numpy as np
 from collections import deque
 from matplotlib.path import Path
 
+from aiworker.config import FRAME_SKIP_RATE
+
 
 # --- Fall Detection Logic ---
 def _angle_between_points(a, b, c):
@@ -21,6 +23,9 @@ def is_likely_horizontal(bbox, threshold=1.2):
     return (width / height) > threshold
 
 def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_size, cooldown_frames):
+
+    fps = 25
+    frame_interval = FRAME_SKIP_RATE
 
     # -----  条件1：关键角度
 
@@ -51,19 +56,23 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
     height_change = abs(height - status['prev_height']) / (status['prev_height'] + 1e-5)
     status['prev_height'] = height
 
+    if 'fall_time' not in status:
+        status['fall_time'] = 0.0
+
     # -----  分数计算
 
     # 角度得分（0-30）
     angle_score = 30 if angle < 10 else np.clip((angle_thresh - angle) / angle_thresh * 30, 0, 30)
     # 宽高比得分（0-50）
-    wh_score = np.clip((wh_ratio - 1.2) / 1.8 * 40, 0, 40)
+    wh_score = np.clip((wh_ratio - 1) / 1.2 * 40, 0, 40)
     # 高度变化分数
-    motion_score = np.clip(height_change / 0.5 * 10, 0, 10)
+    motion_score = np.clip(height_change / 0.3 * 10, 0, 10)
     # 动作持续得分（0-20）
-    status = person_fall_status[pid]
-    duration_score = np.clip(status['fall_frame_count'] / window_size * 20, 0, 20)
+    # status = person_fall_status[pid]
+    # duration_score = np.clip(status['fall_frame_count'] / window_size * 20, 0, 20)
+    duration_score = np.clip(status['fall_time'] / 0.3 * 20, 0, 20)
 
-    total_score = (angle_score + wh_score + duration_score + motion_score )/100
+    total_score = (1.5 * angle_score + 1.2 * wh_score + 1.0 * motion_score + 1.8 * duration_score) / 100
 
     status = person_fall_status[pid]
 
@@ -71,14 +80,17 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
         status['cooldown_counter'] -= 1
         return True, False ,total_score # 冷却中，仍认为是摔倒状态，但不是新事件
 
-    score_thresh = 0.6  # 总分超过60
+    score_thresh = 0.45  # 总分超过45
     extreme_wh_ratio = 1.2  # 宽高比超过1.2
     is_fall = angle < angle_thresh or total_score >= score_thresh  or (height_change > 0.3) or wh_ratio > extreme_wh_ratio
 
     if is_fall:
-        status['fall_frame_count'] += 1
-        if status['fall_frame_count'] >= window_size:
-            if not status['is_falling']:
+        # status['fall_frame_count'] += 1
+        status['fall_time'] += (frame_interval / fps)
+
+        # if status['fall_frame_count'] >= 0.2:
+        if status['fall_time'] >= 0.2:
+            if not status.get('is_falling', False):
                 status['is_falling'] = True
                 status['cooldown_counter'] = cooldown_frames
                 return True, True ,total_score # 是摔倒 + 是新事件
