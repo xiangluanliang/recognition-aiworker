@@ -80,34 +80,30 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
         status['cooldown_counter'] -= 1
         return True, False, 0.9
 
-    score_thresh = 0.45  # 总分超过45
-    extreme_wh_ratio = 1.2  # 宽高比超过1.2
-    is_fall = angle < angle_thresh or total_score >= score_thresh  or (height_change > 0.3) or wh_ratio > extreme_wh_ratio
+    is_posture_fallen = angle < angle_thresh
+    is_shape_or_motion_abnormal = (wh_ratio > 1.2) or (height_change > 0.3)
+
+    is_fall = is_posture_fallen and is_shape_or_motion_abnormal
 
     if is_fall:
-        # status['fall_frame_count'] += 1
         status['fall_time'] += (frame_interval / fps)
-
-        # if status['fall_frame_count'] >= 0.2:
         if status['fall_time'] >= 0.2:
             if not status.get('is_falling', False):
                 status['is_falling'] = True
                 status['cooldown_counter'] = cooldown_frames
-                return True, True ,total_score # 是摔倒 + 是新事件
-            return True, False ,total_score # 是摔倒，但已记录
+                return True, True, total_score
+            return True, False, total_score
     else:
-        # 只有在所有摔倒迹象都消失时，才重置计数器
         status['fall_frame_count'] = 0
         status['is_falling'] = False
 
-    # --- 确认事件和冷却逻辑 (保持不变) ---
     if status['fall_frame_count'] >= window_size:
         if not status['is_falling']:
             status['is_falling'] = True
             status['cooldown_counter'] = cooldown_frames
-            score = 0.95 if is_sudden_drop else 0.85
-            return True, True, score  # 是摔倒 + 是新事件
-        return True, False, 0.8  # 是摔倒，但已上报
+            score = 0.95
+            return True, True, score
+        return True, False, 0.8
 
     return False, False, 0.1
 
