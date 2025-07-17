@@ -27,19 +27,28 @@ def log_event(event_data: dict):
     except Exception as e:
         logger.error(f"Failed to log event to Django: {e}")
 
-def fetch_warning_zones(camera_id: int) -> dict:
-    """从Django后端获取指定摄像头的警戒区配置。"""
-    default_zones = {'zones': [], 'safe_time': 5, 'safe_distance': 50.0}
+
+def fetch_warning_zones_for_camera(camera_id: int) -> list:
+    """
+    根据摄像头ID，从Django API获取其所有关联的警戒区域。
+    """
+    if not DJANGO_API_TOKEN:
+        logger.error("Django API Token未配置，无法获取警戒区域。")
+        return []
+
+    url = f"{DJANGO_API_BASE_URL}warning_zones/by-camera/{camera_id}/"
+    headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
+
     try:
-        # 注意：URL应该从config.py中获取
-        url = f"{DJANGO_API_BASE_URL}warning_zones/by-camera/{camera_id}/"
-        headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
-        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        response = requests.get(url, headers=headers, timeout=5, verify=False)
         response.raise_for_status()
-        return response.json()
+        zones = response.json()
+        logger.info(f"成功为摄像头 {camera_id} 获取到 {len(zones)} 个警戒区域。")
+        return zones
+
     except requests.exceptions.RequestException as e:
-        logger.error(f"获取摄像头 {camera_id} 的警戒区失败: {e}")
-        return default_zones
+        logger.error(f"请求摄像头 {camera_id} 的警戒区域时失败: {e}")
+        return []
 
 
 def get_camera_details(camera_id: int) -> dict | None:

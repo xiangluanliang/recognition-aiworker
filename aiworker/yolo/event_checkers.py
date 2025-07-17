@@ -138,27 +138,37 @@ def _min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=3):
     return min(_min_distance_point_to_polygon(pt, polygon) for pt in sample_points)
 
 
-def check_intrusion(pid, bbox, center, camera_id, warning_zones, recorded_intrusions, status_cache, frame_idx,
-                    stay_frames, safe_dist):
+def check_intrusion(pid, bbox, center, zone_list, recorded_intrusions, status_cache, frame_idx):
+    """
+    检查单个 person 是否侵入了任何一个警戒区域。
+    现在从 zone_list 中的每个字典获取独立的配置。
+    """
     newly_detected_zones = []
     is_currently_intruding = False
 
-    for zone_index, polygon in enumerate(warning_zones.get(camera_id, [])):
+    # 遍历处理好的区域列表
+    for zone_info in zone_list:
+        zone_id = zone_info['id']
+        polygon = zone_info['polygon']
+        safe_dist = zone_info['safe_dist']
+        stay_frames = zone_info['stay_frames']
+
         min_dist = _min_distance_bbox_to_polygon(bbox, polygon)
-        cache_key = f"{pid}_{zone_index}"
+        cache_key = f"{pid}_{zone_id}"
 
         if _point_in_polygon(center, polygon) or min_dist < safe_dist:
             is_currently_intruding = True
             if cache_key not in status_cache:
-                status_cache[cache_key] = frame_idx  # 记录进入的帧号
+                status_cache[cache_key] = frame_idx
 
             stay_duration = frame_idx - status_cache[cache_key]
+
             if stay_duration >= stay_frames:
-                if (pid, zone_index) not in recorded_intrusions:
-                    recorded_intrusions.add((pid, zone_index))
-                    newly_detected_zones.append(zone_index)
+                if (pid, zone_id) not in recorded_intrusions:
+                    recorded_intrusions.add((pid, zone_id))
+                    newly_detected_zones.append(zone_info)
         else:
-            status_cache.pop(cache_key, None)  # 离开区域，清除缓存
+            status_cache.pop(cache_key, None)
 
     return is_currently_intruding, newly_detected_zones
 

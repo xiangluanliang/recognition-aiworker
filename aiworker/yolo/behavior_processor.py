@@ -10,7 +10,7 @@ import logging
 from .yolo_detector import YoloDetector
 from .logic_tracker import match_person_id
 from .event_checkers import check_fall, check_intrusion, detect_fight
-from ..services.api_client import fetch_warning_zones, log_event
+from ..services.api_client import fetch_warning_zones_for_camera, log_event
 from ..utils.drawing import draw_pose, draw_abnormal_zone
 from ..utils.file_saver import save_clip, save_event_image
 from ..config import *
@@ -40,25 +40,28 @@ class AbnormalBehaviorProcessor:
         self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))  # 打架检测需要最近5帧的姿态
         self.prev_centers_history = defaultdict(lambda: deque(maxlen=5))  # 历史中心点，计算速度加速度等
 
-        # --- 初始化时从API获取警戒区域配置 ---
-        zone_data = fetch_warning_zones(self.camera_id)
+        self.warning_zones = []
 
-        if zone_data and isinstance(zone_data, list) and len(zone_data) > 0:
-            first_zone_info = zone_data[0]
-            raw_zones = [first_zone_info]  # 或者你后端设计是只发一个区域，直接包成列表
-            zones = []
-            for zone in raw_zones:
-                points = zone.get('zone_points', [])
-                converted = [[pt['x'], pt['y']] for pt in points]
-                zones.append(converted)
+        if 'intrusion_detection' in self.active_detectors:
+            raw_zones_data = fetch_warning_zones_for_camera(self.camera_id)
 
-            self.warning_zones = {self.camera_id: zones}
-            self.stay_frames_required = int(self.fps * first_zone_info.get('safe_time', DEFAULT_STAY_SECONDS))
-            self.safe_distance = first_zone_info.get('safe_distance', DEFAULT_SAFE_DISTANCE)
-        else:
-            self.warning_zones = {self.camera_id: []}
-            self.stay_frames_required = int(self.fps * DEFAULT_STAY_SECONDS)
-            self.safe_distance = DEFAULT_SAFE_DISTANCE
+            # 优化：解析每个区域的独立配置
+            for zone_data in raw_zones_data:
+                polygon = [[pt['x'], pt['y']] for pt in zone_data.get('zone_points', [])]
+                if not polygon:
+                    continue
+
+                # 为每个区域单独计算和存储其配置
+                stay_seconds = zone_data.get('safe_time', DEFAULT_STAY_SECONDS)
+                self.warning_zones.append({
+                    'id': zone_data.get('id'),
+                    'name': zone_data.get('name', '未命名区域'),
+                    'polygon': polygon,
+                    'stay_frames': int(self.fps * stay_seconds),
+                    'safe_dist': zone_data.get('safe_distance', DEFAULT_SAFE_DISTANCE)
+                })
+
+            self.logger.info(f"摄像头 {self.camera_id} 加载了 {len(self.warning_zones)} 个处理后的警戒区域。")
 
         self.logger.info(
             f"Processor for camera {camera_id} initialized with {len(self.warning_zones[self.camera_id])} zones.")
@@ -112,14 +115,15 @@ class AbnormalBehaviorProcessor:
                     self._log_event('person_fall', pid, score, frame)
 
             if 'intrusion_detection' in self.active_detectors:
-                is_intruding_event, new_intrusion_zones = check_intrusion(
-                    pid, bbox, centers[i], self.camera_id, self.warning_zones,
-                    self.recorded_intrusions, self.zone_status_cache, self.frame_idx,
-                    self.stay_frames_required, self.safe_distance
+                is_intruding, new_intrusion_zones_info = check_intrusion(
+                    pid, bbox, centers[i],
+                    self.warning_zones,
+                    self.recorded_intrusions, self.zone_status_cache, self.frame_idx
                 )
-                for zone_index in new_intrusion_zones:
+                for zone_info in new_intrusion_zones_info:
                     all_event_pids.add(pid)
-                    self._log_event('intrusion', pid, confidences[i], frame, details={'zone_index': zone_index})
+                    self._log_event('intrusion', pid, confidences[i], frame,
+                                    details={'zone_id': zone_info['id'], 'zone_name': zone_info['name']})
 
             is_in_any_event = pid in all_event_pids or is_fall_event or is_intruding_event
             color = (0, 0, 255) if is_in_any_event else (0, 255, 0)

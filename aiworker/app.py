@@ -171,7 +171,6 @@ def capture_and_process_thread(ai_function_name: str, camera_id: str):
 
 
 @app.route('/cameras/<int:camera_id>')
-# ✅ 函数签名也相应简化
 def video_feed(camera_id: str):
     ai_function_name = 'abnormal_detection'
 
