@@ -1,6 +1,7 @@
 # app.py
 import base64
 import json
+import queue
 
 import cv2
 import numpy as np
@@ -67,6 +68,27 @@ AI_FUNCTIONS = ['abnormal_detection']
 #
 #         time.sleep(10)
 
+def frame_reader_thread(cap: cv2.VideoCapture, frame_queue: queue.Queue):
+    """一个专门负责从VideoCapture对象中读取帧并放入队列的线程。"""
+    app.logger.info("读帧线程已启动。")
+    while True:
+        if not cap.isOpened():
+            break
+
+        success, frame = cap.read()
+        if not success:
+            break
+
+        if not frame_queue.full():
+            frame_queue.put(frame)
+        else:
+            with frame_queue.mutex:
+                frame_queue.queue.clear()
+            frame_queue.put(frame)
+
+    app.logger.info("读帧线程已退出。")
+    frame_queue.put(None)
+
 
 def capture_and_process_thread(ai_function_name: str, camera_id: str):
     camera_id_int = int(camera_id)
@@ -75,8 +97,8 @@ def capture_and_process_thread(ai_function_name: str, camera_id: str):
 
     camera_details = get_camera_details(camera_id_int)
 
-    if not camera_details:
-        logger.error(f"无法为摄像头 {camera_id} 获取任何详情，线程退出。")
+    if not camera_details or not camera_details.get('password'):
+        logger.error(f"无法为摄像头 {camera_id} 获取有效配置或推流码，线程退出。")
         video_streams_cache.pop(cache_key, None)
         return
 
@@ -84,89 +106,50 @@ def capture_and_process_thread(ai_function_name: str, camera_id: str):
     active_detectors = camera_details.get('active_detectors', [])
     logger.info(f"成功为摄像头 {camera_id} 获取到配置: {active_detectors}, 推流码: {stream_key}")
 
-    if not stream_key:
-        logger.error(f"摄像头 {camera_id} 未配置推流码(stream_key/password)，线程退出。")
+    rtmp_url = f'{RTMP_SERVER_URL}{stream_key}'
+    cap = cv2.VideoCapture(rtmp_url)
+    if not cap.isOpened():
+        app.logger.error(f"VideoCapture无法打开流 {rtmp_url}，线程退出。")
         video_streams_cache.pop(cache_key, None)
         return
 
-    rtmp_url = f'{RTMP_SERVER_URL}{stream_key}'
-    cap = cv2.VideoCapture(rtmp_url)
+    fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
+    processor_instance = AbnormalBehaviorProcessor(
+        camera_id_int, yolo_detector, fps, enabled_detectors=active_detectors
+    )
 
-    processor_instance = None
-    if ai_function_name == 'abnormal_detection':
-        if cap.isOpened():
-            success, _ = cap.read()
-            if success:
-                fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
-                logger.info(f"视频流FPS获取成功: {fps}")
-            else:
-                logger.warning("无法读取视频流的第一帧，将使用默认FPS: 30")
-                fps = 30
-        else:
-            logger.error("VideoCapture无法打开流，将使用默认FPS: 30")
-            fps = 30
-        processor_instance = AbnormalBehaviorProcessor(
-            camera_id_int,
-            yolo_detector,
-            fps,
-            enabled_detectors=active_detectors
-        )
-
-    if not cap.isOpened():
-        app.logger.error(f"Cannot open stream: {rtmp_url}")
-        return 
-        # 即使视频流打开失败，我们依然可以尝试启动音频检测
-        # if processor_instance:
-        #     audio_thread = threading.Thread(
-        #         target=audio_detect_thread,
-        #         args=(rtmp_url, camera_id, processor_instance),
-        #         daemon=True
-        #     )
-        #     audio_thread.start()
-        # if not cap.isOpened():
-        #     return
-
-    app.logger.info(f"Thread started for stream '{stream_key}' with AI '{ai_function_name}' for camera '{camera_id}'")
+    frame_queue = queue.Queue(maxsize=50)
+    reader = threading.Thread(target=frame_reader_thread, args=(cap, frame_queue), daemon=True)
+    reader.start()
+    app.logger.info(f"处理线程已为 {cache_key} 启动，开始进入主循环。")
 
     frame_count = 0
     while cache_key in video_streams_cache:
-        app.logger.info(f"循环开始，准备读取第 {frame_count + 1} 帧...")
-        for _ in range(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1):
-            cap.grab()
-        success, frame = cap.read()
-        if not success:
-            app.logger.warning(f"读取第 {frame_count + 1} 帧失败，尝试重连...")
-            time.sleep(0.1)
-            cap.release()
-            cap = cv2.VideoCapture(rtmp_url)
-            app.logger.warning(f"Stream {stream_key} disconnected. Attempting to reconnect...")
-            continue
+        try:
+            frame = frame_queue.get(timeout=10)
 
-        app.logger.info(f"成功读取第 {frame_count + 1} 帧。")
-        frame_count += 1
+            if frame is None:
+                app.logger.info("收到读帧线程的退出信号，处理线程即将退出。")
+                break
 
-        if processor_instance and hasattr(processor_instance, 'video_buffer'):
-            processor_instance.video_buffer.append(frame.copy())
+            frame_count += 1
+            if processor_instance and hasattr(processor_instance, 'video_buffer'):
+                processor_instance.video_buffer.append(frame.copy())
 
-        if frame_count % FRAME_SKIP_RATE != 0:
-            continue
+            if frame_count % FRAME_SKIP_RATE != 0:
+                continue
 
-        app.logger.info(f"--- 开始处理第 {frame_count} 帧 ---")
-
-        resized_frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-        processed_frame = resized_frame
-        if ai_function_name == 'abnormal_detection' and processor_instance:
+            resized_frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
             processed_frame, _ = processor_instance.process_frame(resized_frame)
 
-        app.logger.info(f"--- 第 {frame_count} 帧处理完成，准备编码并更新缓存 ---")
-        ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-        if ret:
-            with stream_lock:
-                video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
-        app.logger.info(f"--- 缓存更新完毕 ---")
+            ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+            if ret:
+                with stream_lock:
+                    video_streams_cache[cache_key]['frame_bytes'] = buffer.tobytes()
 
-    if processor_instance:
-        processor_instance.is_active = False
+        except queue.Empty:
+            app.logger.warning(f"处理线程等待新帧超时（10秒），判定流 {camera_id} 已中断。")
+
     cap.release()
     video_streams_cache.pop(cache_key, None)
     app.logger.info(f"主处理线程已为 {cache_key} 停止。")

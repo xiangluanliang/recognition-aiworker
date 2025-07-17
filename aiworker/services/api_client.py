@@ -19,13 +19,16 @@ def fetch_known_faces():
         return []
 
 def log_event(event_data: dict):
-    """向Django后端上报一个事件。"""
+    url = f"{DJANGO_API_BASE_URL}log-event/"
+    headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
     try:
-        url = f"{DJANGO_API_BASE_URL}log-event/"
-        headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
-        requests.post(url, json=event_data, timeout=5, headers=headers, verify=False)
-    except Exception as e:
-        logger.error(f"Failed to log event to Django: {e}")
+        response = requests.post(url, json=event_data, headers=headers, timeout=5, verify=False)
+        if response.status_code >= 400:
+            logger.error(f"上报事件失败，状态码: {response.status_code}, 响应: {response.text}")
+        else:
+            logger.info(f"成功上报事件: {event_data.get('event_type')}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"上报事件时发生网络错误: {e}")
 
 
 def fetch_warning_zones_for_camera(camera_id: int) -> list:
