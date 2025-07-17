@@ -72,7 +72,7 @@ PERSON_MATCHING_THRESHOLD = 60 # 追踪时匹配ID的像素距离阈值
 CLIP_DURATION_SECONDS = 2
 
 # Fall Detection
-FALL_ANGLE_THRESHOLD = 85.0 # 身体倾斜角度阈值
+FALL_ANGLE_THRESHOLD = 35.0 # 身体倾斜角度阈值
 FALL_WINDOW_SIZE = 3 # 连续N帧满足条件才判断为摔倒
 FALL_COOLDOWN_FRAMES = 150 # 摔倒事件上报后的冷却时间
 
@@ -81,9 +81,12 @@ DEFAULT_STAY_SECONDS = 5
 DEFAULT_SAFE_DISTANCE = 50.0
 
 # Fight Detection
-FIGHT_DISTANCE_THRESHOLD = 120 # 打架判断的距离阈值
-FIGHT_MOTION_THRESHOLD = 6.0 # 身体动作幅度阈值
-FIGHT_ORIENTATION_SIMILARITY_THRESHOLD = 0.3 # 面部朝向相似度阈值
+FIGHT_DISTANCE_THRESHOLD = 180           # 人体之间距离阈值（像素）
+FIGHT_MOTION_THRESHOLD = 3.5             # 运动标准差阈值
+FIGHT_ORIENTATION_SIMILARITY_THRESHOLD = -0.1  # 朝向点积阈值，负数代表面对面
+FIGHT_SPEED_THRESHOLD = 10.0             # 速度阈值（像素/帧）
+FIGHT_ACCELERATION_THRESHOLD = 5.0       # 加速度阈值（像素/帧²）
+FIGHT_KPTS_CHANGE_THRESHOLD = 0.1        # 关键点变化阈值
 
 # Drawing
 POSE_PAIRS = [

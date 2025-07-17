@@ -39,6 +39,7 @@ class AbnormalBehaviorProcessor:
         self.recorded_intrusions = set()
         self.recorded_conflicts = set()
         self.fight_kpts_history = defaultdict(lambda: deque(maxlen=5))  # 打架检测需要最近5帧的姿态
+        self.prev_centers_history = defaultdict(lambda: deque(maxlen=5))  # 历史中心点，计算速度加速度等
 
         # --- 初始化时从API获取警戒区域配置 ---
         zone_data = fetch_warning_zones(self.camera_id)
@@ -95,15 +96,19 @@ class AbnormalBehaviorProcessor:
         for i, kpts in enumerate(kpts_list):
             self.fight_kpts_history[ids[i]].append(kpts.copy())
 
+        for pid, center in zip(ids, centers):
+            self.prev_centers_history[pid].append(center)
+
         # 4. 事件检测 (调用EventCheckers模块)
-        conflict_pairs ,conflict_scores= detect_fight(
-            ids, centers, self.fight_kpts_history,
-            FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD
+        conflict_pairs_with_scores = detect_fight(
+            ids, centers, self.fight_kpts_history,self.prev_centers_history,
+            FIGHT_DISTANCE_THRESHOLD, FIGHT_MOTION_THRESHOLD, FIGHT_ORIENTATION_SIMILARITY_THRESHOLD,
+            FIGHT_SPEED_THRESHOLD,FIGHT_ACCELERATION_THRESHOLD,FIGHT_KPTS_CHANGE_THRESHOLD
         )
 
         all_event_pids = set()  # 记录本帧所有参与事件的人员ID，用于高亮绘制
         # 处理打架事件
-        for pid1, pid2,conflict_scores in conflict_pairs:
+        for pid1, pid2, conflict_scores in conflict_pairs_with_scores:
             for pid in [pid1, pid2]:
                 all_event_pids.add(pid)
                 # 10秒内对同一个人只上报一次打架事件，避免事件风暴
