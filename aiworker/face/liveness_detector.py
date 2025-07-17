@@ -137,7 +137,7 @@ class LivenessDetector:
                 'combined_live_status': is_live
             })
 
-        if self.blink_completed:
-            self.reset_blink_state()
+        # if self.blink_completed:
+        #     self.reset_blink_state()
 
         return liveness_results

@@ -237,6 +237,7 @@ def liveness_check_websocket(ws):
 
     session_vision_worker = VisionServiceWorker()
     known_faces_data = fetch_known_faces()
+    session_vision_worker.liveness_detector.reset_blink_state()
 
     frame_counter = 0
     frame_skip_rate = 3
