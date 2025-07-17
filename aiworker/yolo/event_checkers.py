@@ -1,6 +1,5 @@
 # aiworker/yolo/event_checkers.py
 import numpy as np
-from collections import deque
 from matplotlib.path import Path
 
 
