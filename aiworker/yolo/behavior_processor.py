@@ -88,6 +88,9 @@ class AbnormalBehaviorProcessor:
         self.frame_idx += 1
         processed_frame = frame.copy()
 
+        polygons_to_draw = [zone['polygon'] for zone in self.warning_zones]
+        draw_abnormal_zone(processed_frame, polygons_to_draw)
+
         kpts_list, centers, confidences = self.yolo_detector.detect_people(processed_frame)
         if not kpts_list:
             if self.frame_idx % 100 == 0:
@@ -132,40 +135,61 @@ class AbnormalBehaviorProcessor:
             x2, y2 = np.max(kpts[:, 0]), np.max(kpts[:, 1])
             bbox = (int(x1), int(y1), int(x2), int(y2))
 
-            if 'fall_detection' in self.active_detectors:
-                _, is_new_fall, score = check_fall(
-                    pid, kpts, bbox, self.person_fall_status,
-                    FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
-                )
-                if is_new_fall:
-                    self.logger.error(f"检测到摔倒。")
-                    all_event_pids.add(pid)
-                    self._log_event('person_fall', pid, score, frame)
+            # 调用入侵检测逻辑
+            is_intruding, new_intrusion_zones_info = check_intrusion(
+                pid, bbox, centers[i],
+                self.warning_zones,
+                self.recorded_intrusions, self.zone_status_cache, self.frame_idx
+            )
 
-            if 'intrusion_detection' in self.active_detectors:
-                is_intruding_event, new_intrusion_zones_info = check_intrusion(
-                    pid, bbox, centers[i],
-                    self.warning_zones,
-                    self.recorded_intrusions, self.zone_status_cache, self.frame_idx
-                )
+            # 如果检测到新的入侵事件，上报
+            if new_intrusion_zones_info:
+                self.logger.error(f"检测到区域入侵行为。")
                 for zone_info in new_intrusion_zones_info:
-                    all_event_pids.add(pid)
-                    self.logger.error(f"检测到区域入侵行为。")
                     self._log_event('intrusion', pid, confidences[i], frame,
                                     details={'zone_id': zone_info['id'], 'zone_name': zone_info['name']})
 
-            is_in_recent_fall = pid in self.recent_falls and (
-            self.frame_idx - self.recent_falls.get(pid, 0)) < FALL_HIGHLIGHT_DURATION_FRAMES
-            is_in_any_event = pid in all_event_pids or is_in_recent_fall  # 优先使用 recent_falls 的状态
-            color = (0, 0, 255) if is_in_any_event else (0, 255, 0)
+            # --- 可视化调试信息 ---
+            debug_texts = []
+            display_color = (0, 255, 0)  # 默认为绿色
 
-            draw_pose(processed_frame, kpts, color)
-            cv2.rectangle(processed_frame, bbox[:2], bbox[2:], color, 2)
+            if is_intruding:
+                display_color = (0, 165, 255)  # 橙色表示正在侵入中
+
+                # 查找此人对应的计时器信息
+                for zone_info in self.warning_zones:
+                    zone_id = zone_info['id']
+                    cache_key = f"{pid}_{zone_id}"
+
+                    if cache_key in self.zone_status_cache:
+                        status = self.zone_status_cache[cache_key]
+                        stay_duration = self.frame_idx - status['start_frame']
+
+                        # 将帧数转换为秒
+                        stay_seconds = stay_duration / self.fps
+                        required_seconds = zone_info['stay_frames'] / self.fps
+
+                        debug_texts.append(f"Zone {zone_id}: INSIDE")
+                        debug_texts.append(f"Timer: {stay_seconds:.1f}s / {required_seconds:.1f}s")
+
+                        # 如果已触发警报，颜色变为红色
+                        if (pid, zone_id) in self.recorded_intrusions:
+                            display_color = (0, 0, 255)
+                            debug_texts.append("ALARM TRIGGERED!")
+                        break  # 只显示第一个正在侵入的区域信息
+
+            # 绘制姿态和边界框
+            draw_pose(processed_frame, kpts, display_color)
+            cv2.rectangle(processed_frame, bbox[:2], bbox[2:], display_color, 2)
+
+            # 在头顶绘制ID和调试文本
             label = f"ID:{pid}"
-            cv2.putText(processed_frame, label, (bbox[0], bbox[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.putText(processed_frame, label, (bbox[0], bbox[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, display_color,
+                        2)
 
-        polygons_to_draw = [zone['polygon'] for zone in self.warning_zones]
-        draw_abnormal_zone(processed_frame, polygons_to_draw)
+            for idx, text in enumerate(debug_texts):
+                y_pos = bbox[1] - 35 - (idx * 20)
+                cv2.putText(processed_frame, text, (bbox[0], y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, display_color, 2)
 
         if self.frame_idx % 100 == 0:
             self._cleanup_stale_ids(current_pids)
