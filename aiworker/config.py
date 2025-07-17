@@ -13,6 +13,8 @@ MEDIA_ROOT = '/srv/http/recognition_media'
 # --- Stream Processing Parameters ---
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
+CANONICAL_ZONE_WIDTH = 640
+CANONICAL_ZONE_HEIGHT = 480
 FRAME_SKIP_RATE = 3  # 每3帧进行一次昂贵的AI计算
 JPEG_QUALITY = 70
 

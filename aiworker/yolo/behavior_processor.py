@@ -49,18 +49,26 @@ class AbnormalBehaviorProcessor:
         self.warning_zones = []
         if 'intrusion_detection' in self.active_detectors:
             raw_zones_data = fetch_warning_zones_for_camera(self.camera_id)
+            self.logger.info(f"从API获取到摄像头 {self.camera_id} 的原始区域数据: {raw_zones_data}")
+
+            # 计算缩放比例
+            x_scale = FRAME_WIDTH / CANONICAL_ZONE_WIDTH
+            y_scale = FRAME_HEIGHT / CANONICAL_ZONE_HEIGHT
 
             for zone_data in raw_zones_data:
-                polygon = [[pt['x'], pt['y']] for pt in zone_data.get('zone_points', [])]
-                if not polygon:
+                scaled_polygon = [
+                    [int(pt['x'] * x_scale), int(pt['y'] * y_scale)]
+                    for pt in zone_data.get('zone_points', [])
+                ]
+
+                if not scaled_polygon:
                     continue
 
-                stay_seconds = zone_data.get('safe_time', DEFAULT_STAY_SECONDS)
                 self.warning_zones.append({
                     'id': zone_data.get('id'),
                     'name': zone_data.get('name', '未命名区域'),
-                    'polygon': polygon,
-                    'stay_frames': int(self.fps * stay_seconds),
+                    'polygon': scaled_polygon,
+                    'stay_frames': int(self.fps * zone_data.get('safe_time', DEFAULT_STAY_SECONDS)),
                     'safe_dist': zone_data.get('safe_distance', DEFAULT_SAFE_DISTANCE)
                 })
 
