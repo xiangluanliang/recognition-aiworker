@@ -168,7 +168,10 @@ def check_intrusion(pid, bbox, center, camera_id, warning_zones, recorded_intrus
 def calc_center_velocity(center_history):
     if len(center_history) < 2:
         return 0
-    return np.linalg.norm(center_history[-1] - center_history[-2])
+    vec_a = np.array(center_history[-1])
+    vec_b = np.array(center_history[-2])
+
+    return np.linalg.norm(vec_a - vec_b)
 # 加速度计算
 def calc_center_acceleration(center_history):
     if len(center_history) < 3:
