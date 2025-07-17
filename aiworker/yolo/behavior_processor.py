@@ -1,6 +1,5 @@
 # aiworker/yolo/behavior_processor.py
-from datetime import datetime
-
+from datetime import datetime,timezone
 import cv2
 import os
 import numpy as np
@@ -185,7 +184,7 @@ class AbnormalBehaviorProcessor:
             self.logger.error(f"保存事件 '{event_type}' 的证据文件时发生异常: {e}", exc_info=True)
 
         event_data = {
-            'time': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'time': datetime.now(timezone.utc).isoformat(),
             'camera': self.camera_id,
             'event_type': event_type,
             'confidence': confidence,
