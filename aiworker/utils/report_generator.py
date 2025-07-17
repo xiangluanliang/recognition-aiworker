@@ -1,47 +1,37 @@
 import os
-from transformers import AutoTokenizer, AutoModelForCausalLM
 import logging
-import torch
+from openai import OpenAI
+from tabulate import tabulate
+from aiworker.config import DEEPSEEK_API_KEY
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - (ReportGenerator) - %(message)s')
 logger = logging.getLogger(__name__)
 
 class ReportGeneratorService:
     """
-    一个封装了 AI 模型加载和文本生成逻辑的服务类。
+    一个封装了 DeepSeek API 调用和文本生成逻辑的服务类，包含表格生成。
     """
-    MODEL_NAME = "Qwen/Qwen1.5-0.5B-Chat"
+    DEEPSEEK_API_BASE = "https://api.deepseek.com"
+    DEEPSEEK_MODEL = "deepseek-chat"
 
     def __init__(self):
         """
-        初始化服务，加载模型和分词器。
-        这是一个昂贵的操作，应该只在服务启动时执行一次。
+        初始化服务，配置 DeepSeek API 客户端。
         """
-        self.model = None
-        self.tokenizer = None
-        self.device = None
-
-        logger.info(f"开始加载模型: {self.MODEL_NAME}...")
+        self.client = None
+        logger.info("开始配置 DeepSeek API 客户端...")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.MODEL_NAME,
-                trust_remote_code=True
+            api_key = DEEPSEEK_API_KEY
+            if not api_key:
+                raise ValueError("未找到 DEEPSEEK_API_KEY 环境变量。请设置你的 DeepSeek API 密钥。")
+            self.client = OpenAI(
+                api_key=api_key,
+                base_url=self.DEEPSEEK_API_BASE
             )
-
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.MODEL_NAME,
-                trust_remote_code=True
-            )
-
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.model.to(self.device)
-            self.model.eval()
-
-            logger.info(f"模型 {self.MODEL_NAME} 加载成功，运行在设备: {self.device}")
-
+            logger.info("DeepSeek API 客户端初始化成功。")
         except Exception as e:
-            logger.error(f"加载模型 {self.MODEL_NAME} 失败: {e}", exc_info=True)
-            raise ConnectionError(f"Failed to load model '{self.MODEL_NAME}'.")
+            logger.error(f"初始化 DeepSeek API 客户端失败: {e}", exc_info=True)
+            raise ConnectionError("Failed to initialize DeepSeek API client.")
 
     def build_chat_prompt(self, summary_data: dict) -> list[dict]:
         """
@@ -53,87 +43,160 @@ class ReportGeneratorService:
         Returns:
             一个列表，包含 system 和 user 角色的消息字典。
         """
-        # 基础提示语
         prompt_lines = [
             "你是一个安防监控系统的智能助手，请根据以下监控统计数据生成一段简明扼要的中文日报。",
-            "内容应包括以下四部分（使用小标题分段）：①事件总体情况，②事件类型分布，③摄像头状态，④风险提示建议。\n",
-            "注意：不要编造我未提供的信息，不要做过多主观猜测。\n",
+            "内容应包括以下四部分（使用小标题分段）：①事件总体情况，②事件类型分布，③摄像头状态，④风险提示建议。",
+            "注意：事件类型分布部分将由系统以表格形式呈现，你无需生成该部分的描述，只需对其他部分生成自然语言内容。",
+            "不要编造我未提供的信息，不要做过多主观猜测。",
             "特别说明：'区域入侵' 是指检测到人员进入了不允许进入的安全区域。\n\n",
-            "数据摘要如下："]
+            "数据摘要如下："
+        ]
 
         event_stats = summary_data.pop('各类型事件统计', {})
-
         for key, value in summary_data.items():
             prompt_lines.append(f"- {key}: {value}")
 
-        if event_stats:
-            prompt_lines.append("- 各类型事件统计:")
-            for event_type, count in event_stats.items():
-                prompt_lines.append(f"  - {event_type}: {count}")
+        prompt_lines.append("\n请输出一段自然语言格式的中文报告，包含事件总体情况、摄像头状态和风险提示建议。事件类型分布部分将由系统另行处理为表格。")
 
-        prompt_lines.append("\n请输出一段自然语言格式的中文报告，内容应包括：事件概况、摄像头状态，并对潜在的风险进行提醒。")
         user_prompt = "\n".join(prompt_lines)
+
         messages = [
             {"role": "system", "content": "你是一个安防监控系统的智能助手，负责生成专业的安防日报。"},
             {"role": "user", "content": user_prompt}
         ]
-        return messages
+        return messages, event_stats  # 返回 messages 和 event_stats
 
     def generate_text(self, messages: list[dict]) -> str:
         """
-        使用已加载的模型，根据输入的 messages 生成文本。
+        使用 DeepSeek API 根据输入的 messages 生成文本。
+
+        Args:
+            messages: 包含聊天历史的列表。
+
+        Returns:
+            由 DeepSeek API 生成的报告内容字符串。
         """
-        if not self.model or not self.tokenizer:
-            logger.error("服务未正确初始化，无法生成报告。")
-            raise RuntimeError("服务未正确初始化，模型或分词器不可用。")
+        if not self.client:
+            raise RuntimeError("服务未正确初始化，DeepSeek API 客户端不可用。")
 
         try:
-            input_text = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
+            response = self.client.chat.completions.create(
+                model=self.DEEPSEEK_MODEL,
+                messages=messages,
+                max_tokens=512,
+                temperature=0.7,
+                stream=False
             )
-            inputs = self.tokenizer(input_text, return_tensors="pt").to(self.device)
-            outputs = self.model.generate(**inputs, max_new_tokens=512)
-            response = self.tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[-1]:],
-                skip_special_tokens=True
-            )
-            return response.strip()
-
+            report_content = response.choices[0].message.content.strip()
+            return report_content
         except Exception as e:
-            logger.error(f"生成报告时发生错误: {e}", exc_info=True)
-            return ""  # 返回空字符串，让上层处理
-
+            logger.error(f"调用 DeepSeek API 失败: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to generate text with DeepSeek API: {e}")
 
 try:
     report_service_instance = ReportGeneratorService()
 except Exception as e:
-    logger.critical(f"无法实例化 ReportGeneratorService，报告生成功能将不可用: {e}")
+    logger.error(f"无法实例化 ReportGeneratorService: {e}")
     report_service_instance = None
-
 
 def process_report_generation(summary_data: dict) -> str:
     """
-    处理日报生成的核心流程。
-    (此函数逻辑正确，保持不变)
+    处理日报生成的核心流程，包含表格生成。
     """
     if report_service_instance is None:
         raise ConnectionError("ReportGeneratorService failed to initialize.")
 
-    messages = report_service_instance.build_chat_prompt(summary_data)
+    # 获取 prompt 和事件统计
+    messages, event_stats = report_service_instance.build_chat_prompt(summary_data.copy())
     logger.info(f"为AI生成的聊天消息: {messages}")
 
+    # 生成表格（事件类型分布）
+    table_content = ""
+    if event_stats:
+        table_data = [[event_type, count] for event_type, count in event_stats.items()]
+        table_content = tabulate(
+            table_data,
+            headers=["事件类型", "发生次数"],
+            tablefmt="grid",
+            stralign="center",
+            numalign="center"
+        )
+    else:
+        table_content = "无事件记录"
+
+    # 生成 AI 文本
     report_content = report_service_instance.generate_text(messages)
     logger.info(f"从AI生成的文本: '{report_content}'")
 
-    if not report_content:
+    # 组合最终报告
+    final_report = f"监控日报 ({summary_data.get('日期', 'N/A')})\n\n"
+    if report_content:
+        # 插入表格到事件类型分布部分
+        sections = report_content.split("###")
+        if len(sections) >= 2:
+            # 假设 AI 生成了小标题分段的内容，插入表格到“事件类型分布”部分
+            final_report += sections[1].strip() + "\n\n"  # 事件总体情况
+            final_report += "### 事件类型分布\n" + table_content + "\n\n"
+            final_report += "\n".join(sections[2:]).strip()  # 剩余部分（摄像头状态、风险提示建议）
+        else:
+            final_report += report_content + "\n\n### 事件类型分布\n" + table_content
+    else:
         logger.warning("AI模型返回了空内容，将使用备用报告。")
         online_cameras = summary_data.get('在线摄像头', 'N/A')
         total_cameras = summary_data.get('摄像头总数', 'N/A')
-        report_content = (
-            f"监控日报 ({summary_data.get('日期', 'N/A')})\n\n"
-            f"本日系统运行平稳，未监测到任何安防事件记录。一切正常。\n"
-            f"摄像头状态：{online_cameras}/{total_cameras} 台在线。"
+        final_report += (
+            "本日系统运行平稳，未监测到任何安防事件记录。一切正常。\n\n"
+            f"### 事件类型分布\n{table_content}\n\n"
+            f"### 摄像头状态\n{online_cameras}/{total_cameras} 台在线。\n\n"
+            "### 风险提示建议\n当前无明显风险，建议继续保持设备正常运行。"
         )
-    return report_content
+
+    return final_report
+
+if __name__ == '__main__':
+    # 示例1: 有事件发生的情况
+    print("\n" + "=" * 20 + " 测试案例 1: 有事件发生 " + "=" * 20)
+    summary_data_with_events = {
+        '日期': '2025-07-13',
+        '总事件数': 14,
+        '未处理事件数': 3,
+        '处理中事件数': 4,
+        '已处理事件数': 7,
+        '摄像头总数': 20,
+        '在线摄像头': 18,
+        '各类型事件统计': {
+            '人脸识别匹配': 5,
+            '火警': 2,
+            '区域入侵': 6,
+            '人员冲突': 1,
+        }
+    }
+
+    try:
+        final_report_1 = process_report_generation(summary_data_with_events)
+        print("\n--- professors✅ 生成的最终报告 1 ---\n")
+        print(final_report_1)
+    except ConnectionError as e:
+        print(f"\n--- ❌ 报告生成失败 ---")
+        print(e)
+
+    # 示例2: 无事件发生的真实输入
+    print("\n\n" + "=" * 20 + " 测试案例 2: 无事件发生 " + "=" * 20)
+    summary_data_no_events = {
+        "日期": "2025-07-14",
+        "总事件数": 0,
+        "未处理事件数": 0,
+        "处理中事件数": 0,
+        "已处理事件数": 0,
+        "摄像头总数": 4,
+        "在线摄像头": 3,
+        "各类型事件统计": {}
+    }
+
+    try:
+        final_report_2 = process_report_generation(summary_data_no_events)
+        print("\n--- ✅ 生成的最终报告 2 ---\n")
+        print(final_report_2)
+    except ConnectionError as e:
+        print(f"\n--- ❌ 报告生成失败 ---")
+        print(e)
