@@ -17,7 +17,7 @@ from flask_sock import Sock
 
 # --- 导入重构后的模块 ---
 from aiworker.config import *
-from aiworker.services.api_client import fetch_known_faces, log_event
+from aiworker.services.api_client import *
 from aiworker.face.vision_service import VisionServiceWorker
 from aiworker.face.face_handler import process_frame_for_api
 from aiworker.yolo.behavior_processor import AbnormalBehaviorProcessor
@@ -68,29 +68,48 @@ AI_FUNCTIONS = ['abnormal_detection']
 #         time.sleep(10)
 
 
-def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id: str):
-    cache_key = (stream_id, ai_function_name, camera_id)
-    stream_lock = video_streams_cache[cache_key]['lock']
+def capture_and_process_thread(ai_function_name: str, camera_id: str):
     camera_id_int = int(camera_id)
+    cache_key = (ai_function_name, camera_id)
+    stream_lock = video_streams_cache[cache_key]['lock']
 
-    CAMERA_CONFIGS = {
-        "1": ["fall_detection", "intrusion_detection"],
-        "6": ["fall_detection", "fight_detection"],
-        "default": ["fall_detection", "intrusion_detection", "fight_detection"]  # 默认配置
-    }
-    active_detectors_for_cam = CAMERA_CONFIGS.get(camera_id, CAMERA_CONFIGS["default"])
+    camera_details = get_camera_details(camera_id_int)
 
-    rtmp_url = f'{RTMP_SERVER_URL}{stream_id}'
+    if not camera_details:
+        logger.error(f"无法为摄像头 {camera_id} 获取任何详情，线程退出。")
+        video_streams_cache.pop(cache_key, None)
+        return
+
+    stream_key = camera_details.get('password')
+    active_detectors = camera_details.get('active_detectors', [])
+    logger.info(f"成功为摄像头 {camera_id} 获取到配置: {active_detectors}, 推流码: {stream_key}")
+
+    if not stream_key:
+        logger.error(f"摄像头 {camera_id} 未配置推流码(stream_key/password)，线程退出。")
+        video_streams_cache.pop(cache_key, None)
+        return
+
+    rtmp_url = f'{RTMP_SERVER_URL}{stream_key}'
     cap = cv2.VideoCapture(rtmp_url)
 
     processor_instance = None
     if ai_function_name == 'abnormal_detection':
-        fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
+        if cap.isOpened():
+            success, _ = cap.read()
+            if success:
+                fps = int(cap.get(cv2.CAP_PROP_FPS) or 30)
+                logger.info(f"视频流FPS获取成功: {fps}")
+            else:
+                logger.warning("无法读取视频流的第一帧，将使用默认FPS: 30")
+                fps = 30
+        else:
+            logger.error("VideoCapture无法打开流，将使用默认FPS: 30")
+            fps = 30
         processor_instance = AbnormalBehaviorProcessor(
             camera_id_int,
             yolo_detector,
             fps,
-            enabled_detectors=active_detectors_for_cam
+            enabled_detectors=active_detectors
         )
 
     if not cap.isOpened():
@@ -107,7 +126,7 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
         # if not cap.isOpened():
         #     return
 
-    app.logger.info(f"Thread started for stream '{stream_id}' with AI '{ai_function_name}' for camera '{camera_id}'")
+    app.logger.info(f"Thread started for stream '{stream_key}' with AI '{ai_function_name}' for camera '{camera_id}'")
 
     frame_count = 0
     while cache_key in video_streams_cache:
@@ -118,7 +137,7 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
             time.sleep(0.1)
             cap.release()
             cap = cv2.VideoCapture(rtmp_url)
-            app.logger.warning(f"Stream {stream_id} disconnected. Attempting to reconnect...")
+            app.logger.warning(f"Stream {stream_key} disconnected. Attempting to reconnect...")
             continue
 
         app.logger.info(f"成功读取第 {frame_count + 1} 帧。")
@@ -149,18 +168,21 @@ def capture_and_process_thread(stream_id: str, ai_function_name: str, camera_id:
     cap.release()
     video_streams_cache.pop(cache_key, None)
     app.logger.info(f"主处理线程已为 {cache_key} 停止。")
-@app.route('/<ai_function_name>/<stream_id>/<camera_id>')
-def video_feed(ai_function_name: str, stream_id: str, camera_id: str):
-    if ai_function_name not in AI_FUNCTIONS:
-        return Response(f"Error: AI stream function '{ai_function_name}' not found.", status=404)
 
-    cache_key = (stream_id, ai_function_name, camera_id)
+
+@app.route('/cameras/<int:camera_id>')
+# ✅ 函数签名也相应简化
+def video_feed(camera_id: str):
+    ai_function_name = 'abnormal_detection'
+
+    cache_key = (ai_function_name, str(camera_id))
+
     if cache_key not in video_streams_cache:
         app.logger.info(f"Cache miss for {cache_key}. Creating new processing thread.")
         video_streams_cache[cache_key] = {'lock': threading.Lock(), 'frame_bytes': None}
         thread = threading.Thread(
             target=capture_and_process_thread,
-            args=(stream_id, ai_function_name, camera_id),
+            args=(ai_function_name, str(camera_id)),
             daemon=True
         )
         thread.start()

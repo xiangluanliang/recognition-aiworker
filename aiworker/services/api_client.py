@@ -40,3 +40,29 @@ def fetch_warning_zones(camera_id: int) -> dict:
     except requests.exceptions.RequestException as e:
         logger.error(f"获取摄像头 {camera_id} 的警戒区失败: {e}")
         return default_zones
+
+
+def get_camera_details(camera_id: int) -> dict | None:
+    """
+    根据摄像头ID从Django API获取其详细信息，包括启用的AI功能。
+    """
+    if not DJANGO_API_TOKEN:
+        logger.error("Django API Token未配置，无法获取摄像头详情。")
+        return None
+
+    url = f"{DJANGO_API_BASE_URL}cameras/{camera_id}/"
+    headers = {
+        "Authorization": f"Token {DJANGO_API_TOKEN}"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=5, verify=False)
+        response.raise_for_status()
+
+        camera_data = response.json()
+        logger.info(f"成功从API获取到摄像头 {camera_id} 的详情。")
+        return camera_data
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"请求摄像头 {camera_id} 详情时发生网络错误: {e}")
+        return None
