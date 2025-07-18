@@ -153,6 +153,7 @@ class AbnormalBehaviorProcessor:
                         if audio_event and time.time() - audio_event['timestamp'] < 2:
                             # 如果有音频，再更新这两个变量
                             final_score =  min(0.99, score + audio_event['score'] * 0.5)
+                            self.logger.Info(f"声学检测加分：{audio_event['score']}")
                             details = {
                                 'trigger': 'vision_and_audio',
                                 'audio_label': audio_event['label'],
