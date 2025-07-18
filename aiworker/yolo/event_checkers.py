@@ -216,9 +216,9 @@ def check_intrusion(pid, keypoints, camera_id, warning_zones, recorded_intrusion
             # 离开区域，清除记录
             status_cache.pop(cache_key, None)
 
-                # 只有当人离开区域超过宽容期后，才真正重置计时器
-                if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
-                    status_cache.pop(cache_key, None)
+            # 只有当人离开区域超过宽容期后，才真正重置计时器
+            if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
+                status_cache.pop(cache_key, None)
 
     return is_currently_intruding_any_zone, newly_detected_zones
 
