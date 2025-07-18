@@ -36,14 +36,19 @@ def trigger_alarm(event, confidence, processor):
     2. 继续调用 _log_event，直接记录独立的音频告警事件。
     """
     if processor:
-        logger.info(f"音频事件触发！声音: '{event}', 置信度: {confidence:.2f}")
-        event_info = {'label': event, 'score': confidence, 'timestamp': time.time()}
+        logger.info(f"======> trigger_alarm 已被成功调用！声音: '{event}', 置信度: {confidence:.2f} <======")
+
+        event_info = {
+            'label': event,
+            'score': confidence,
+            'timestamp': time.time()
+        }
         processor.last_audio_event_for_fusion = event_info
-        
+
         event_type_key = f'audio_{event.lower().replace(", ", "_").replace(" ", "_")}'
         processor._log_event(
             event_type=event_type_key,
-            pid=0, # 0 代表环境事件
+            pid=0,
             confidence=confidence,
             frame=processor.video_buffer[-1] if processor.video_buffer else None,
             details={'trigger': 'audio_only'}

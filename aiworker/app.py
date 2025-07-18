@@ -44,7 +44,9 @@ video_streams_cache = {}
 AI_FUNCTIONS = ['abnormal_detection']
 
 def audio_detect_thread(rtmp_url, camera_id, processor):
-    """ (修改版) 音频检测线程 """
+    """ 音频检测线程 """
+    logger = app.logger
+    logger.info(f"[AudioThread-{camera_id}] 音频检测线程已启动。")
     while True:
         audio_path = None
         try:
@@ -57,11 +59,18 @@ def audio_detect_thread(rtmp_url, camera_id, processor):
                 "-vn", "-acodec", "pcm_s16le", "-ar", "32000", "-ac", "1",
                 audio_path
             ]
+            logger.info(f"[AudioThread-{camera_id}] 准备执行ffmpeg命令，截取音频到: {audio_path}")
             subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"[AudioThread-{camera_id}] ffmpeg命令执行成功。")
             processor.latest_audio_clip_path = audio_path
 
             waveform = load_audio(audio_path, sr=32000)
             results = audio_detector.detect(waveform)
+
+            if results:
+                top_result = results[0]
+                logger.info(
+                    f"[AudioThread-{camera_id}] 音频AI检测最高分结果: {top_result['label']} (分数: {top_result['score']:.2f})")
 
             for result in results:
                 label = result['label']
@@ -69,8 +78,11 @@ def audio_detect_thread(rtmp_url, camera_id, processor):
                 if label in INTERESTING_CLASSES and is_abnormal(label, score):
                     trigger_alarm(label, score, processor)
 
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"[AudioThread-{camera_id}] ffmpeg命令执行失败! Stderr: {e.stderr}")
         except Exception as e:
-            logger.error(f"[AudioThread-{camera_id}] 音频处理失败: {e}")
+            logger.error(f"[AudioThread-{camera_id}] 音频处理线程发生未知错误: {e}", exc_info=True)
 
         time.sleep(5)
         
