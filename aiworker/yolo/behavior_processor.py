@@ -143,6 +143,18 @@ class AbnormalBehaviorProcessor:
             x2, y2 = np.max(kpts[:, 0]), np.max(kpts[:, 1])
             bbox = (int(x1), int(y1), int(x2), int(y2))
 
+            is_new_fall_event = False
+            if 'fall_detection' in self.active_detectors:
+                is_falling, is_new_fall, score = check_fall(
+                    pid, kpts, bbox, self.person_fall_status,
+                    FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
+                )
+                if is_new_fall:
+                    is_new_fall_event = True
+                    all_event_pids.add(pid)
+                    self.logger.error(f"检测到摔倒 (分数: {score:.2f})。")
+                    self._log_event('person_fall', pid, score, frame)
+
             # 调用入侵检测逻辑
             is_intruding, new_intrusion_zones_info = check_intrusion(
                 pid, bbox, centers[i],
@@ -159,7 +171,8 @@ class AbnormalBehaviorProcessor:
 
             # --- 可视化调试信息 ---
             debug_texts = []
-            display_color = (0, 255, 0)  # 默认为绿色
+            is_in_event = is_new_fall_event or is_intruding
+            display_color = (0, 0, 255) if is_in_event else (0, 255, 0)
 
             if is_intruding:
                 display_color = (0, 165, 255)  # 橙色表示正在侵入中
