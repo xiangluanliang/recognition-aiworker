@@ -161,10 +161,10 @@ class AbnormalBehaviorProcessor:
                             self.last_audio_event_for_fusion = None
                         
                         if final_score >= 0.3:
-                            self.logger.error(f"检测到高置信度摔倒 (音频分数：{audio_event['score']:.2f} , 综合分数: {final_score:.2f})，准备上报。")
+                            self.logger.error(f"检测到高置信度摔倒，准备上报。")
                             self._log_event('person_fall', pid, final_score, frame, details)
                         else:
-                            self.logger.info(f"检测到低置信度摔倒 (音频分数：{audio_event['score']:.2f}，综合分数: {final_score:.2f})，已忽略，不上报。")
+                            self.logger.info(f"检测到低置信度摔倒 ，已忽略，不上报。")
 
                 # --- 入侵检测 ---
                 is_intruding = False # 先初始化
