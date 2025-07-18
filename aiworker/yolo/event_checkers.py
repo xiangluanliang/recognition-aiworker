@@ -84,7 +84,7 @@ def check_fall(pid, kpts, bbox, person_fall_status, base_angle_thresh, window_si
     is_posture_fallen = angle < angle_thresh
     is_shape_or_motion_abnormal = (wh_ratio > 1.2) or (height_change > 0.3)
 
-    is_fall = is_posture_fallen and is_shape_or_motion_abnormal
+    is_fall = is_posture_fallen or is_shape_or_motion_abnormal
 
     if is_fall:
         status['fall_time'] += (frame_interval / fps)
