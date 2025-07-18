@@ -149,7 +149,9 @@ def process_report_generation(summary_data: dict) -> str:
             # 假设 AI 生成了小标题分段的内容，插入表格到“事件类型分布”部分
             final_report += sections[1].strip() + "\n\n"  # 事件总体情况
             final_report += "### 事件类型分布\n" + table_content + "\n\n"
-            final_report += "\n".join(sections[2:]).strip()  # 剩余部分（摄像头状态、风险提示建议）
+            remaining_sections = "\n".join(sections[2:]).strip()
+            remaining_sections = remaining_sections.replace("\n\n", "\n")  # 去除空行
+            final_report += remaining_sections
         else:
             final_report += report_content + "\n\n### 事件类型分布\n" + table_content
     else:
