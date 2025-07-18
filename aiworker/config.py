@@ -72,7 +72,7 @@ YOLO_POSE_MODEL_FILENAME = "yolov8l-pose.pt"
 PERSON_MATCHING_THRESHOLD = 60 # 追踪时匹配ID的像素距离阈值
 
 #这个是切片的时长，但是我们的视频短短的
-CLIP_DURATION_SECONDS = 5
+CLIP_DURATION_SECONDS = 3
 
 # Fall Detection
 FALL_ANGLE_THRESHOLD = 35.0 # 身体倾斜角度阈值
