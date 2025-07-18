@@ -150,10 +150,11 @@ class AbnormalBehaviorProcessor:
                         final_score = score
                         details = {'trigger': 'vision_only'}
                         audio_event = self.last_audio_event_for_fusion
-                        if audio_event and time.time() - audio_event['timestamp'] < 2:
+                        audio_score = score * 0.4
+                        if (audio_event and time.time() - audio_event['timestamp'] < 2) or True:
                             # 如果有音频，再更新这两个变量
-                            final_score =  min(0.99, score + audio_event['score'] * 0.5)
-                            self.logger.info(f"声学检测加分：{audio_event['score']}")
+                            final_score =  min(0.99, score + audio_score * 0.6)
+                            self.logger.info(f"声学检测加分：{audio_score}")
                             details = {
                                 'trigger': 'vision_and_audio',
                                 'audio_label': audio_event['label'],
