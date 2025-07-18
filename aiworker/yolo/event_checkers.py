@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib.path import Path
 from sympy import Polygon, Point
 
-from aiworker.config import FRAME_SKIP_RATE, INTRUSION_GRACE_PERIOD_FRAMES
+from aiworker.config import FRAME_SKIP_RATE, INTRUSION_GRACE_PERIOD_FRAMES, DEFAULT_SAFE_DISTANCE, DEFAULT_STAY_SECONDS
 
 
 # --- Fall Detection Logic ---
@@ -179,46 +179,50 @@ def _min_distance_kpts_to_polygon(keypoints, polygon):
 
     return min_dist
 
-def check_intrusion(pid, keypoints, camera_id, warning_zones, recorded_intrusions, status_cache, frame_time,
-                    stay_seconds, safe_dist):
+def check_intrusion(pid, bbox, center, zone_list, recorded_intrusions, status_cache, frame_idx):
     """
-    判断某个人是否在某摄像头的危险区域内停留超过阈值时间
-    :param pid: 人的唯一ID
-    :param keypoints: 人体关键点坐标
-    :param camera_id: 摄像头ID
-    :param warning_zones: 各摄像头的危险区域字典 {camera_id: [polygon1, polygon2, ...]}
-    :param recorded_intrusions: 已记录的入侵 (pid, zone_index) 集合
-    :param status_cache: 用于记录首次入侵时间 {pid_zone_index: first_time}
-    :param frame_time: 当前帧时间戳（单位：秒）
-    :param stay_seconds: 触发报警需要持续的秒数
-    :param safe_dist: 安全距离（像素）
-    :return: (当前是否有入侵, 当前新触发的区域 index 列表)
+    (Corrected Version) Checks for intrusion.
+    - Reads safe_dist and stay_frames from each zone's dictionary.
+    - Includes the robust grace period for the timer.
     """
     newly_detected_zones = []
     is_currently_intruding_any_zone = False
 
-    for zone_index, polygon in enumerate(warning_zones.get(camera_id, [])):
-        min_dist = _min_distance_kpts_to_polygon(keypoints, polygon)
-        cache_key = f"{pid}_{zone_index}"
+    for zone_info in zone_list:
+        zone_id = zone_info.get('id')
+        polygon = zone_info.get('polygon')
+        safe_dist = zone_info.get('safe_dist', DEFAULT_SAFE_DISTANCE)
+        # Convert stay_seconds to stay_frames
+        stay_frames = zone_info.get('stay_frames', int(DEFAULT_STAY_SECONDS * 30)) # Assuming 30 FPS
+        cache_key = f"{pid}_{zone_id}"
 
-        # 任一关键点在区域内 或 距离小于安全距离
-        if any(_point_in_polygon(kpt, polygon) for kpt in keypoints) or min_dist < safe_dist:
-            is_currently_intruding = True
+        if not polygon:
+            continue
+
+        is_inside_zone = _point_in_polygon(center, polygon) or _min_distance_bbox_to_polygon(bbox, polygon) < safe_dist
+
+        if is_inside_zone:
+            is_currently_intruding_any_zone = True
+
             if cache_key not in status_cache:
-                status_cache[cache_key] = frame_time  # 记录首次进入时间（秒）
+                status_cache[cache_key] = {
+                    'start_frame': frame_idx,
+                    'last_seen_frame': frame_idx
+                }
+            else:
+                status_cache[cache_key]['last_seen_frame'] = frame_idx
 
-            stay_duration = frame_time - status_cache[cache_key]
-            if stay_duration >= stay_seconds:
-                if (pid, zone_index) not in recorded_intrusions:
-                    recorded_intrusions.add((pid, zone_index))
-                    newly_detected_zones.append(zone_index)
+            stay_duration = frame_idx - status_cache[cache_key]['start_frame']
+
+            if stay_duration >= stay_frames:
+                if (pid, zone_id) not in recorded_intrusions:
+                    recorded_intrusions.add((pid, zone_id))
+                    newly_detected_zones.append(zone_info)
         else:
-            # 离开区域，清除记录
-            status_cache.pop(cache_key, None)
-
-            # 只有当人离开区域超过宽容期后，才真正重置计时器
-            if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
-                status_cache.pop(cache_key, None)
+            if cache_key in status_cache:
+                frames_since_last_seen = frame_idx - status_cache[cache_key]['last_seen_frame']
+                if frames_since_last_seen > INTRUSION_GRACE_PERIOD_FRAMES:
+                    status_cache.pop(cache_key, None)
 
     return is_currently_intruding_any_zone, newly_detected_zones
 
