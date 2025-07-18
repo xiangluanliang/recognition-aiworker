@@ -25,8 +25,7 @@ INTERESTING_CLASSES = {
 def is_abnormal(label, score):
     if label not in INTERESTING_CLASSES:
         return False
-    # 权重越高，阈值越低，越容易触发告警
-    threshold = 0.25 / INTERESTING_CLASSES[label]
+    threshold = 0.05 / INTERESTING_CLASSES[label]
     return score > threshold
 
 
