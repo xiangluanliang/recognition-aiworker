@@ -152,7 +152,7 @@ class AbnormalBehaviorProcessor:
                         audio_event = self.last_audio_event_for_fusion
                         if audio_event and time.time() - audio_event['timestamp'] < 2:
                             # 如果有音频，再更新这两个变量
-                            final_score = 1.0 - (1.0 - score) * (1.0 - audio_event['score'])
+                            final_score =  min(0.99, score + audio_event['score'] * 0.5)
                             details = {
                                 'trigger': 'vision_and_audio',
                                 'audio_label': audio_event['label'],
@@ -162,7 +162,6 @@ class AbnormalBehaviorProcessor:
                         
                         self.logger.error(f"检测到摔倒 (综合分数: {final_score:.2f})。")
                         self._log_event('person_fall', pid, final_score, frame, details)
-                        # ▲▲▲ 修正结束 ▲▲▲
 
                 # --- 入侵检测 ---
                 is_intruding = False # 先初始化

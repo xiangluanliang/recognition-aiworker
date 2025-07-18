@@ -262,28 +262,24 @@ def liveness_check_websocket(ws):
 
                 if frame_counter > BLINK_TIMEOUT_FRAMES:
                     is_final_result = True
-                    final_status = 'timeout'
                     response_json['message'] = '活体检测超时'
                     response_json['liveness_passed'] = False
-                else:
-                    persons = response_json.get('persons', [])
-                    if persons:  # 只有在检测到人脸时才进行后续判断
-                        first_person = persons[0]
-                        liveness_info = first_person.get('liveness_info', {})
 
-                        # 1. 快速失败：OULU分数过低
-                        if liveness_info.get('oulu_score', 1.0) < OULU_LIVENESS_HARD_THRESHOLD:
-                            is_final_result = True
-                            final_status = 'fraud_detected'
-                            response_json['message'] = '检测到欺诈攻击'
-                            response_json['liveness_passed'] = False
-
-                        # 2. 最终成功：眨眼完成
-                        elif liveness_info.get('blink_status') == 'BLINK_COMPLETED':
-                            is_final_result = True
-                            final_status = 'success'
-                            response_json['message'] = '活体检测通过'
-                            response_json['liveness_passed'] = True
+                # 检查是否眨眼已完成 (这是会话结束的标志之一)
+                elif response_json.get('persons') and \
+                     response_json['persons'][0].get('liveness_info', {}).get('blink_status') == 'BLINK_COMPLETED':
+                    is_final_result = True
+                    if response_json.get('liveness_passed'):
+                        response_json['message'] = '活体检测通过'
+                    else:
+                        response_json['message'] = '活体检测失败 (欺诈攻击)'
+                
+                # 检查是否被OULU模型硬性拒绝
+                elif response_json.get('persons') and \
+                     response_json['persons'][0].get('liveness_info', {}).get('oulu_score', 1.0) < OULU_LIVENESS_HARD_THRESHOLD:
+                    is_final_result = True
+                    response_json['message'] = '检测到欺诈攻击'
+                    response_json['liveness_passed'] = False
 
                 if is_final_result:
                     app.logger.info(f"Final result determined: {final_status}")
