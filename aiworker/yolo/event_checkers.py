@@ -2,6 +2,7 @@
 import numpy as np
 from collections import deque
 from matplotlib.path import Path
+from sympy import Polygon, Point
 
 from aiworker.config import FRAME_SKIP_RATE
 
@@ -132,6 +133,8 @@ def _min_distance_point_to_polygon(point, polygon):
 
 
 # --- Helper function: Bounding Box to Polygon Distance ---
+
+# 人物框上取点，计算到危险区域的最小距离
 def _min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=3):
     """
     通过在边界框上采样点，估算边界框到多边形的最短距离。
@@ -150,30 +153,88 @@ def _min_distance_bbox_to_polygon(bbox, polygon, num_samples_per_edge=3):
     # 返回所有采样点中，距离多边形最近的那个距离
     return min(_min_distance_point_to_polygon(pt, polygon) for pt in sample_points)
 
+# yolo识别的多个节点距离危险区域的最小距离
+def _min_distance_kpts_to_polygon(keypoints, polygon):
+    """
+    计算所有关键点到不规则多边形的最小距离
+    :param keypoints: List of [x, y] 关键点坐标
+    :param polygon: List of (x, y) 多边形点集
+    :return: 所有点到 polygon 的最小距离
+    """
+    danger_zone = Polygon(polygon)
 
-def check_intrusion(pid, bbox, center, camera_id, warning_zones, recorded_intrusions, status_cache, frame_idx,
-                    stay_frames, safe_dist):
+    min_dist = float('inf')
+    for pt in keypoints:
+        point = Point(pt)
+        dist = point.distance(danger_zone)
+        if dist < min_dist:
+            min_dist = dist
+
+    return min_dist
+
+def check_intrusion(pid, keypoints, camera_id, warning_zones, recorded_intrusions, status_cache, frame_time,
+                    stay_seconds, safe_dist):
+    """
+    判断某个人是否在某摄像头的危险区域内停留超过阈值时间
+    :param pid: 人的唯一ID
+    :param keypoints: 人体关键点坐标
+    :param camera_id: 摄像头ID
+    :param warning_zones: 各摄像头的危险区域字典 {camera_id: [polygon1, polygon2, ...]}
+    :param recorded_intrusions: 已记录的入侵 (pid, zone_index) 集合
+    :param status_cache: 用于记录首次入侵时间 {pid_zone_index: first_time}
+    :param frame_time: 当前帧时间戳（单位：秒）
+    :param stay_seconds: 触发报警需要持续的秒数
+    :param safe_dist: 安全距离（像素）
+    :return: (当前是否有入侵, 当前新触发的区域 index 列表)
+    """
     newly_detected_zones = []
     is_currently_intruding = False
 
     for zone_index, polygon in enumerate(warning_zones.get(camera_id, [])):
-        min_dist = _min_distance_bbox_to_polygon(bbox, polygon)
+        min_dist = _min_distance_kpts_to_polygon(keypoints, polygon)
         cache_key = f"{pid}_{zone_index}"
 
-        if _point_in_polygon(center, polygon) or min_dist < safe_dist:
+        # 任一关键点在区域内 或 距离小于安全距离
+        if any(_point_in_polygon(kpt, polygon) for kpt in keypoints) or min_dist < safe_dist:
             is_currently_intruding = True
             if cache_key not in status_cache:
-                status_cache[cache_key] = frame_idx  # 记录进入的帧号
+                status_cache[cache_key] = frame_time  # 记录首次进入时间（秒）
 
-            stay_duration = frame_idx - status_cache[cache_key]
-            if stay_duration >= stay_frames:
+            stay_duration = frame_time - status_cache[cache_key]
+            if stay_duration >= stay_seconds:
                 if (pid, zone_index) not in recorded_intrusions:
                     recorded_intrusions.add((pid, zone_index))
                     newly_detected_zones.append(zone_index)
         else:
-            status_cache.pop(cache_key, None)  # 离开区域，清除缓存
+            # 离开区域，清除记录
+            status_cache.pop(cache_key, None)
 
     return is_currently_intruding, newly_detected_zones
+
+
+# def check_intrusion(pid, bbox, center, camera_id, warning_zones, recorded_intrusions, status_cache, frame_idx,
+#                     stay_frames, safe_dist):
+#     newly_detected_zones = []
+#     is_currently_intruding = False
+#
+#     for zone_index, polygon in enumerate(warning_zones.get(camera_id, [])):
+#         min_dist = _min_distance_bbox_to_polygon(bbox, polygon)
+#         cache_key = f"{pid}_{zone_index}"
+#
+#         if _point_in_polygon(center, polygon) or min_dist < safe_dist:
+#             is_currently_intruding = True
+#             if cache_key not in status_cache:
+#                 status_cache[cache_key] = frame_idx  # 记录进入的帧号
+#
+#             stay_duration = frame_idx - status_cache[cache_key]
+#             if stay_duration >= stay_frames:
+#                 if (pid, zone_index) not in recorded_intrusions:
+#                     recorded_intrusions.add((pid, zone_index))
+#                     newly_detected_zones.append(zone_index)
+#         else:
+#             status_cache.pop(cache_key, None)  # 离开区域，清除缓存
+#
+#     return is_currently_intruding, newly_detected_zones
 
 
 # --- Fight Detection Logic ---
