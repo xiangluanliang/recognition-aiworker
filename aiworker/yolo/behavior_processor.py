@@ -7,11 +7,13 @@ from collections import defaultdict, deque
 import time
 import logging
 
+import requests
+
 # --- 导入所有解耦后的独立模块 ---
 from .yolo_detector import YoloDetector
 from .logic_tracker import match_person_id
 from .event_checkers import check_fall, check_intrusion, detect_fight
-from ..services.api_client import fetch_warning_zones_for_camera, log_event
+from ..services.api_client import fetch_warning_zones, log_event, fetch_safety_config
 from ..utils.drawing import draw_pose, draw_abnormal_zone
 from ..utils.file_saver import save_clip, save_event_image
 from ..config import *
@@ -55,11 +57,12 @@ class AbnormalBehaviorProcessor:
             x_scale = FRAME_WIDTH / CANONICAL_ZONE_WIDTH
             y_scale = FRAME_HEIGHT / CANONICAL_ZONE_HEIGHT
 
-            for zone_data in raw_zones_data:
-                scaled_polygon = [
-                    [int(pt['x'] * x_scale), int(pt['y'] * y_scale)]
-                    for pt in zone_data.get('zone_points', [])
-                ]
+            self.warning_zones = {self.camera_id: zones}
+            self.stay_frames_required = int(self.fps * first_zone_info.get('safe_time', DEFAULT_STAY_SECONDS))
+            self.safe_distance = first_zone_info.get('safe_distance', DEFAULT_SAFE_DISTANCE)
+        else:
+            self.warning_zones = {self.camera_id: []}
+            self.stay_frames_required = int(self.fps * DEFAULT_STAY_SECONDS)
 
                 if not scaled_polygon:
                     continue
@@ -100,6 +103,14 @@ class AbnormalBehaviorProcessor:
         draw_abnormal_zone(processed_frame, polygons_to_draw)
 
         kpts_list, centers, confidences = self.yolo_detector.detect_people(processed_frame)
+
+        zones = self.warning_zones.get(self.camera_id, [])
+        # print(f"Drawing {len(zones)} zones: {zones}")
+        draw_abnormal_zone(processed_frame, zones)
+        config = fetch_safety_config(self.camera_id)
+        safe_distance = config['safe_distance']
+        safe_time = config['safe_time']
+
         if not kpts_list:
             if self.frame_idx % 100 == 0:
                 self._cleanup_stale_ids(set())
@@ -143,11 +154,29 @@ class AbnormalBehaviorProcessor:
             x2, y2 = np.max(kpts[:, 0]), np.max(kpts[:, 1])
             bbox = (int(x1), int(y1), int(x2), int(y2))
 
-            # 调用入侵检测逻辑
-            is_intruding, new_intrusion_zones_info = check_intrusion(
-                pid, bbox, centers[i],
+            # 检测摔倒
+            is_fall, is_new_fall, score = check_fall(
+                pid, kpts, bbox, self.person_fall_status,
+                FALL_ANGLE_THRESHOLD, FALL_WINDOW_SIZE, FALL_COOLDOWN_FRAMES
+            )
+            # 检测入侵
+            # is_intruding, new_intrusion_zones = check_intrusion(
+            #     pid, bbox, centers[i], self.camera_id, self.warning_zones,
+            #     self.recorded_intrusions, self.zone_status_cache, self.frame_idx,
+            #     self.stay_frames_required, self.safe_distance
+            # )
+
+            frame_time = time.time()  # 当前帧的实际时间（秒）
+
+            is_intruding, new_intrusion_zones = check_intrusion(
+                pid, kpts_list[i],  # 传入当前人的17关键点
+                self.camera_id,
                 self.warning_zones,
-                self.recorded_intrusions, self.zone_status_cache, self.frame_idx
+                self.recorded_intrusions,
+                self.zone_status_cache,
+                frame_time,  # ✅ 实际时间戳（秒）
+                safe_time,
+                safe_distance
             )
 
             # 如果检测到新的入侵事件，上报
