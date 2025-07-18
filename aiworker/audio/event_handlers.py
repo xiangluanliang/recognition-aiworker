@@ -31,21 +31,22 @@ def is_abnormal(label, score):
 
 def trigger_alarm(event, confidence, processor):
     """
-    当音频事件触发时，调用 AbnormalBehaviorProcessor 实例来记录事件和保存视频切片。
+    当音频事件触发时：
+    1. 将事件信息暂存到处理器，用于后续的音视频融合。
+    2. 继续调用 _log_event，直接记录独立的音频告警事件。
     """
     if processor:
-        print(f"🚨 音频事件触发视频保存：{event} (置信度 {confidence:.2f})")
-        # 复用已有的 _log_event 方法，实现音视频联合证据保全
+        event_info = {'label': event, 'score': confidence, 'timestamp': time.time()}
+        processor.last_audio_event_for_fusion = event_info
+        
         event_type_key = f'audio_{event.lower().replace(", ", "_").replace(" ", "_")}'
         processor._log_event(
             event_type=event_type_key,
-            pid=0,  # 0 代表环境事件
+            pid=0, # 0 代表环境事件
             confidence=confidence,
             frame=processor.video_buffer[-1] if processor.video_buffer else None,
-            details={'trigger': 'audio'}
+            details={'trigger': 'audio_only'}
         )
-    else:
-        print(f"🚨 触发异常声学告警：{event} (置信度 {confidence:.2f})")
 
 
 def handle_audio_file(path: str, processor):

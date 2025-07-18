@@ -44,20 +44,21 @@ video_streams_cache = {}
 AI_FUNCTIONS = ['abnormal_detection']
 
 def audio_detect_thread(rtmp_url, camera_id, processor):
+    """ (修改版) 音频检测线程 """
     while True:
         audio_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_audio:
+            # 创建一个不会自动删除的临时文件
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir='/tmp') as tmp_audio:
                 audio_path = tmp_audio.name
 
-            # 5秒音频采样，采样率32k，单声道
             command = [
-                "ffmpeg", "-y", "-i", rtmp_url,
-                "-t", "5",
+                "ffmpeg", "-y", "-i", rtmp_url, "-t", "5",
                 "-vn", "-acodec", "pcm_s16le", "-ar", "32000", "-ac", "1",
                 audio_path
             ]
             subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            processor.latest_audio_clip_path = audio_path
 
             waveform = load_audio(audio_path, sr=32000)
             results = audio_detector.detect(waveform)
@@ -71,12 +72,8 @@ def audio_detect_thread(rtmp_url, camera_id, processor):
         except Exception as e:
             logger.error(f"[AudioThread-{camera_id}] 音频处理失败: {e}")
 
-        finally:
-            if audio_path and os.path.exists(audio_path):
-                os.remove(audio_path)
-
-        time.sleep(5)  # 每多少秒采集一次，可以调
-
+        time.sleep(5)
+        
 def frame_reader_thread(cap: cv2.VideoCapture, frame_queue: queue.Queue):
     """一个专门负责从VideoCapture对象中读取帧并放入队列的线程。"""
     app.logger.info("读帧线程已启动。")

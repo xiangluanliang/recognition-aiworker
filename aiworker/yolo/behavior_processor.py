@@ -45,6 +45,8 @@ class AbnormalBehaviorProcessor:
         self.recent_falls = {}
         self.person_last_seen = {}
         self.recent_falls = {}
+        self.last_audio_event_for_fusion = None # 暂存最新的音频事件，用于融合
+        self.latest_audio_clip_path = None # 保存最新音频片段的路径
 
         self.warning_zones = []
         if 'intrusion_detection' in self.active_detectors:
@@ -151,9 +153,22 @@ class AbnormalBehaviorProcessor:
                 )
                 if is_new_fall:
                     is_new_fall_event = True
+                    final_score = score
+                    details = {'trigger': 'vision_only'}
+                    
+                    audio_event = self.last_audio_event_for_fusion
+                    if audio_event and time.time() - audio_event['timestamp'] < 2:
+                        final_score = 1.0 - (1.0 - score) * (1.0 - audio_event['score'])
+                        details = {
+                            'trigger': 'vision_and_audio',
+                            'audio_label': audio_event['label'],
+                            'audio_score': audio_event['score']
+                        }
+                        self.last_audio_event_for_fusion = None
+                    
                     all_event_pids.add(pid)
-                    self.logger.error(f"检测到摔倒 (分数: {score:.2f})。")
-                    self._log_event('person_fall', pid, score, frame)
+                    self.logger.error(f"检测到摔倒 (综合分数: {final_score:.2f})。")
+                    self._log_event('person_fall', pid, final_score, frame, details)
 
             # 调用入侵检测逻辑
             is_intruding, new_intrusion_zones_info = check_intrusion(
@@ -237,7 +252,8 @@ class AbnormalBehaviorProcessor:
 
             if self.video_buffer:
                 clip_path = save_clip(
-                    pid, self.frame_idx, self.video_buffer, self.fps, f'{event_type}_clips', event_type
+                    pid, self.frame_idx, self.video_buffer, self.fps, f'{event_type}_clips', event_type,
+                    audio_path=self.latest_audio_clip_path
                 )
         except Exception as e:
             self.logger.error(f"保存事件 '{event_type}' 的证据文件时发生异常: {e}", exc_info=True)
