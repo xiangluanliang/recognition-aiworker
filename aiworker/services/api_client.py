@@ -57,3 +57,19 @@ def fetch_safety_config(camera_id: int) -> dict:
 
     return default_config
 
+def fetch_warning_zones_for_camera(camera_id: int) -> list:
+    """
+    (优化版) 从Django后端获取指定摄像头的所有警戒区域及其完整配置。
+    每个区域对象都包含坐标、safe_time 和 safe_distance。
+    """
+    try:
+        url = f"{DJANGO_API_BASE_URL}warning_zones/by-camera/{camera_id}/"
+        headers = {"Authorization": f"Token {DJANGO_API_TOKEN}"}
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        response.raise_for_status()
+        zones_data = response.json()
+        logger.info(f"成功为摄像头 {camera_id} 获取到 {len(zones_data)} 个警戒区域的完整配置。")
+        return zones_data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"获取摄像头 {camera_id} 的警戒区域配置失败: {e}")
+        return [] # 失败时返回空列表
