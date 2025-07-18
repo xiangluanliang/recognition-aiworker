@@ -288,6 +288,7 @@ def liveness_check_websocket(ws):
                     break
                 else:
                     response_json['status'] = 'processing'
+                    response_json['liveness_passed'] = None
                     ws.send(json.dumps(response_json))
 
     except Exception as e:
